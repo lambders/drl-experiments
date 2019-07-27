@@ -7,5 +7,7 @@ Other package versions would probably work, I'm just listing my tested configura
 - pyTorch
 - pygame
 
+## To Run
+
 ## References
 - DQN: https://deepmind.com/research/publications/human-level-control-through-deep-reinforcement-learning/
