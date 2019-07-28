@@ -82,7 +82,7 @@ class ReplayMemory():
         Add an experience to replay memory.
 
         Arguments:
-            experience (list): The [state, action, reward, next_state] transition of the most recent step
+            experience (list): The [state, action, reward, next_state, done] transition of the most recent step
         """
         # Add the experience to replay memory
         self.memory.append(experience)
@@ -110,7 +110,8 @@ class ReplayMemory():
             'state': sample[:,0],
             'action': sample[:,1],
             'reward': sample[:,2],
-            'next_state': sample[:,3]
+            'next_state': sample[:,3],
+            'done': sample[:,4]
         }
 
 
@@ -145,6 +146,9 @@ class Agent:
         # Number of parameter updates so far
         self.steps = 0
 
+        # Log
+        self.writer = SummaryWriter('log')
+
 
     def select_action(self, state):
         """
@@ -167,7 +171,10 @@ class Agent:
                 return torch.argmax(self.policy_net(state))
 
 
-    def loss(self):
+    def log(self):
+        self.writer.add_scalar('loss', loss, self.step)
+        self.writer.add_scalar('epsilon', self.epsilon, self.step)
+        self.writer.add_scalar('')
         return
 
 
@@ -218,7 +225,7 @@ class Agent:
                 next_state, reward, done = self.game.step(action)
 
                 # Save experience to replay memory
-                self.replay_memory.add([state, action, reward, next_state])
+                self.replay_memory.add([state, action, reward, next_state, done])
 
                 # Move on to the next state
                 # state = next_state
