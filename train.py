@@ -1,9 +1,8 @@
-from dqn import DQN 
-import dataloader
+import random
 
-BATCH_SIZE = 
-class Trainer:
-    def __init__(self, memory_capacity):
-        self.replay_memory = np.zeros(N)
-        self.optimizer = 
-def train():
+from dqn import * 
+import dataloader
+import config as cfg
+
+
+
