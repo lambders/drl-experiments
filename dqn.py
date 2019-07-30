@@ -12,6 +12,7 @@ import torch
 import tensorboardX
 
 import config as cfg
+from game.main import Game 
 
 #TODO Plot episode durations
 class DQN(nn.Module):
@@ -21,8 +22,8 @@ class DQN(nn.Module):
         Initialize a Deep Q-Network instance.
         """
         # Game screenshot dimensions
-        self.h = 84
-        self.w = 84
+        self.h = cfg.FRAME_SIZE
+        self.w = cfg.FRAME_SIZE
 
         # The number of "channels" of the input. In DQN, the # channels refers to the agent history length. The number of most recent frames experienced by the agent that are given as input to the Q network.
         self.n_channels = cfg.AGENT_HISTORY_LENGTH
@@ -141,7 +142,7 @@ class Agent:
 
         self.device = cfg.DEVICE
 
-        self.game = None
+        self.game = Game()
 
         # Number of parameter updates so far
         self.steps = 0

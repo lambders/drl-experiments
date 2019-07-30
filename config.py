@@ -47,3 +47,5 @@ N_ACTIONS = 2
 
 # 'cuda' or 'cpu'
 N_DEVICE = 'cpu'
+
+FRAME_SIZE = 84

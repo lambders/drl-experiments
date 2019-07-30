@@ -1,0 +1,4 @@
+[submodule "game"]
+	path = game
+	url = https://github.com/amanda-lambda/flappy-bird
+	branch = drl
