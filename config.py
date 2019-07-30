@@ -39,9 +39,6 @@ REPLAY_START_SIZE = 500000
 NO_OP_MAX = 30
 
 # Added by me!
-# Number of training iterations
-NUM_EPISODES = 500
-
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
 
@@ -49,3 +46,7 @@ N_ACTIONS = 2
 N_DEVICE = 'cpu'
 
 FRAME_SIZE = 84
+
+SAVE_NETWORK_FREQ = 100000
+
+TRAIN_ITERATIONS = 2000000

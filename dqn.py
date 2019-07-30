@@ -7,8 +7,10 @@ Reference:
     "Human-Level Control Through Deep Reinforcement Learning" by Mnih et al. 
 """
 
+import math
 import random
 import torch
+import numpy as np 
 import tensorboardX
 
 import config as cfg
@@ -124,12 +126,12 @@ class Agent:
         The agent will learn an optimal policy that will allow it to play the game.
         """
         self.replay_memory = ReplayMemory()
-        self.epsilon = cfg.INITIAL_EXPLORATION
+        self.epsilon = np.logspact(math.log(INITIAL_EXPLORATION), math.log(FINAL_EXPLORATION), num=FINAL_EXPLORATION_FRAME, base=math.e)
 
         self.target_net = DQN()
         self.policy_net = DQN()
-        target_net.load_state_dict(policy_net.state_dict())
-        target_net.eval()
+        self.target_net.load_state_dict(policy_net.state_dict())
+        self/target_net.eval()
 
         # The optimizer
         self.optimizer = torch.optim.RMSprop(
@@ -139,6 +141,10 @@ class Agent:
             alpha = cfg.SQUARED_GRADIENT_MOMENTUM,
             eps = cfg.MIN_SQUARED_GRADIENT
         )
+        # self.optimizer = torch.optim.Adam(
+        #     policy_net.parameters(),
+        #     lr = cfg.LEARNING_RATE
+        # )
 
         self.device = cfg.DEVICE
 
@@ -150,6 +156,9 @@ class Agent:
         # Log
         self.writer = SummaryWriter('log')
 
+        # Loss
+        self.loss = torch.nn.MSELoss()
+
 
     def select_action(self, state):
         """
@@ -160,28 +169,24 @@ class Agent:
         Returns:
             tensor: 
         """
-        # Update epsilon
-        # Todo - correct?
-        self.epsilon = cfg.INITIAL_EXPLORATION + (cfg.INITIAL_EXPLORATION - cfg.FINAL_EXPLORATION) * math.exp(-1. * self.steps / cfg.FINAL_EXPLORATION_FRAME)
+        # Select epsilon
+        if self.step > cfg.FINAL_EXPLORATION_FRAME:
+            epsilon = self.epsilon[-1]
+        else:
+            epsilon = self.epsilon[self.step]
 
         # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
-        if random.random() < self.epsilon:
+        if random.random() < epsilon:
             return torch.tensor([random.randrange(cfg.N_ACTIONS)])
         else:
             with torch.no_grad():
                 return torch.argmax(self.policy_net(state))
 
 
-    def log(self):
-        self.writer.add_scalar('loss', loss, self.step)
-        self.writer.add_scalar('epsilon', self.epsilon, self.step)
-        self.writer.add_scalar('')
-        return
-
-
     def optimize_model(self):
         """
         Performs a single step of optimization.
+        Samples a minibatch from replay memory and uses that to update the policy_net.
         """
         # Sample a batch [state, action, reward, next_state]
         batch = self.replay_memory.sample(cfg.MINIBATCH_SIZE)
@@ -190,9 +195,16 @@ class Agent:
 
         # Compute mask of non-final states
 
+        # Use policy_net to find best action
+        best_action = torch.argmax(self.policy_net(batch['state']))
+        # Use target_net to get y_batch
+        q_batch_expected = 
+        # Use policy_net on best action to get q_batch
+
         # Compute Q-value using policy net, Q(s_t, a)
         q_batch = torch.sum(self.policy_net(batch['state']) * batch['action'])
 
+        # y_batch = expected q_batch
         # Compute expected Q-value y using target net. Using a  network with an older set of parameters adds a delay between the time an update to the network is made and the time the update affects targets y, stabilizing training
         q_batch_old = self.target_net(batch['state'])
         y_batch = batch['reward'] + cfg.DISCOUNT_FACTOR * q_batch_old
@@ -200,6 +212,8 @@ class Agent:
         # Clip the reward to be between -1 and 1 for further training stability 
 
         # Compute loss
+        loss = self.loss(q_batch, y_batch)
+        self.writer.add_scalar('loss', loss, self.step)
 
         # Optimize model
         self.optimizer.zero_grad()
@@ -212,44 +226,39 @@ class Agent:
     def train(self):
         """
         """
-        # Initialize the environment and state
+        # Initialize the environment and state (do nothing)
+        frame, reward, done = self.game.step(0)
+        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
-        # Train for x number of episodes
-        for i in range(cfg.NUM_EPISODES):
 
-            # Start a training episode
-            while True:
+        # Start a training episode
+        for i in range(cfg.TRAIN_ITERATIONS):
+            # Update step counter
+            self.steps = i
 
-                # Perform an action
-                # TODO: Hm 'done' would be a reward of -1.
-                action = self.select_action(state)
-                next_state, reward, done = self.game.step(action)
+            # Perform an action
+            action = self.select_action(state)
+            frame, reward, done = self.game.step(action)
+            next_state = torch.cat(state[1:,:,:], frame)
 
-                # Save experience to replay memory
-                self.replay_memory.add([state, action, reward, next_state, done])
+            # Save experience to replay memory
+            self.replay_memory.add([state, action, reward, next_state, done])
 
-                # Move on to the next state
-                # state = next_state
+            # Perform optimization
+            # Sample random minibatch and update policy network
+            self.optimize()
 
-                # Perform optimization
-                # TODO: Use Adam....because better?
-                self.optimize()
+            # Move on to the next state
+            state = next_state
 
-                # End if done
-                if done: 
-                    # Write episode duration in tensorboardX
-                    break
+            # Update the target network
+            if self.steps % cfg.TARGET_NETWORK_UPDATE_FREQ == 0:
+                target_net.load_state_dict(policy_net.state_dict())
 
-                # Update the target network
-                if self.steps % cfg.TARGET_NETWORK_UPDATE_FREQ == 0:
-                    target_net.load_state_dict(policy_net.state_dict())
-
-                # Increment step counter:
-                self.steps += 1
-
-            # Save every five episodes
-            if i % 5 == 0:
+            # Save network
+            if self.steps % SAVE_NETWORK_FREQ == 0:
                 save_checkpoint(target_net.state_dict())
+
 
     def play_game():
         return None
