@@ -7,11 +7,12 @@ Reference:
     "Human-Level Control Through Deep Reinforcement Learning" by Mnih et al. 
 """
 
+import os
 import math
 import random
 import torch
 import numpy as np 
-import tensorboardX
+from tensorboardX import SummaryWriter
 from collections import namedtuple
 
 import config as cfg
@@ -59,7 +60,7 @@ class DQN(torch.nn.Module):
 
 
 
-Experience = namedtuple('Experience', ('state', 'action', 'reward' 'next_state', 'done'))
+Experience = namedtuple('Experience', ('state', 'action', 'reward', 'next_state', 'done'))
 
 class ReplayMemory():
 
@@ -110,10 +111,10 @@ class ReplayMemory():
 
         return {
             'state': torch.stack(sample.state),
-            'action': sample[:,1],
-            'reward': sample[:,2],
+            'action': torch.tensor(sample.action).unsqueeze(1),
+            'reward': torch.tensor(sample.reward),
             'next_state': torch.stack(sample.next_state),
-            'done': sample[:,4]
+            'done': torch.tensor(sample.done),
         }
 
 
@@ -128,22 +129,22 @@ class Agent:
         self.replay_memory = ReplayMemory()
 
         # Epsilon used for selecting actions
-        self.epsilon = np.logspact(
-            math.log(INITIAL_EXPLORATION), 
-            math.log(FINAL_EXPLORATION), 
-            num=FINAL_EXPLORATION_FRAME, 
+        self.epsilon = np.logspace(
+            math.log(cfg.INITIAL_EXPLORATION), 
+            math.log(cfg.FINAL_EXPLORATION), 
+            num=cfg.FINAL_EXPLORATION_FRAME, 
             base=math.e
         )
 
         # Create policy and target DQNs
         self.target_net = DQN()
         self.policy_net = DQN()
-        self.target_net.load_state_dict(policy_net.state_dict())
+        self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
         # The optimizer
         self.optimizer = torch.optim.RMSprop(
-            params = policy_net.parameters(),
+            params = self.policy_net.parameters(),
             lr = cfg.LEARNING_RATE,
             momentum = cfg.GRADIENT_MOMENTUM,
             alpha = cfg.SQUARED_GRADIENT_MOMENTUM,
@@ -157,7 +158,7 @@ class Agent:
         self.device = cfg.DEVICE
 
         # The flappy bird game instance
-        self.game = Game()
+        self.game = Game(cfg.FRAME_SIZE)
 
         # Log to tensorBoard
         self.writer = SummaryWriter('log')
@@ -166,69 +167,68 @@ class Agent:
         self.loss = torch.nn.MSELoss()
 
 
-    def select_action(self, state):
+    def select_action(self, state, step):
         """
         Use epsilon-greedy exploration to select the next action. 
         Controls exploration vs. exploitatioin in the network.
 
         Arguments:
             state (tensor): 
+            step (int): 
         Returns:
-            tensor: 
+            int: 
         """
+        # Make state have a batch size of 1
+        state = state.unsqueeze(0)
         # Select epsilon
-        if self.step > cfg.FINAL_EXPLORATION_FRAME:
-            epsilon = self.epsilon[-1]
-        else:
-            epsilon = self.epsilon[self.step]
+        epsilon = self.epsilon[min(step, cfg.FINAL_EXPLORATION_FRAME)]
 
         # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
         if random.random() < epsilon:
-            return torch.tensor([random.randrange(cfg.N_ACTIONS)])
+            return random.randrange(cfg.N_ACTIONS)
         else:
             with torch.no_grad():
-                return torch.argmax(self.policy_net(state))
+                return torch.argmax(self.policy_net(state), dim=1)[0]
 
 
-    def optimize_model(self):
+    def optimize_model(self, step):
         """
         Performs a single step of optimization.
         Samples a minibatch from replay memory and uses that to update the policy_net.
+
+        Arguments: 
+            step (int)
         """
         # Sample a batch [state, action, reward, next_state]
         batch = self.replay_memory.sample(cfg.MINIBATCH_SIZE)
         if batch is None:
             return
 
-        # Compute mask of non-final states
+        # Compute Q(s_t, a) using the policy_net. 
+        q_batch = torch.gather(self.policy_net(batch['state']), 1, batch['action'])
+        q_batch = q_batch.squeeze()
 
-        # Find best action, q-values using policy_net
-        state_action_values = self.policy_net(batch['state'])
-        best_action = torch.argmax(self.policy_net(batch['state']), dim=1)
-        q_batch = 
-
-        # Get y_batch (expected q_batch) using best action on target_net
-        # Compute expected Q-value y using target net. Using a  network with an older set of parameters adds a delay between the time an update to the network is made and the time the update affects targets y, stabilizing training
-        q_batch_old = self.target_net(batch['state'])
-        y_batch = batch['reward'] + cfg.DISCOUNT_FACTOR * q_batch_old
-
-        # Get q_batch using policyUse policy_net on best action to get q_batch
-        # Compute Q-value using policy net, Q(s_t, a)
-        q_batch = torch.sum(self.policy_net(batch['state']) * batch['action'])
-
-        
-        # Clip the reward to be between -1 and 1 for further training stability 
+        # Compute V(s_{t+1}) for all next states using the target_net. 
+        # Using a network with an older set of parameters adds a delay between 
+        # the time an update to the network is made and the time the update 
+        # affects targets y, stabilizing training
+        q_batch_1, _ = torch.max(self.target_net(batch['next_state']), dim=1)
+        y_batch = batch['reward'] + cfg.DISCOUNT_FACTOR * q_batch_1 
+        y_batch = torch.tensor(
+            [batch['reward'][i] if batch['done'][i] else y_batch[i] for i in range(cfg.MINIBATCH_SIZE)]
+            )
 
         # Compute loss
         loss = self.loss(q_batch, y_batch)
-        self.writer.add_scalar('loss', loss, self.step)
+        print(step, loss.item())
+        self.writer.add_scalar('loss', loss, step)
 
         # Optimize model
         self.optimizer.zero_grad()
         loss.backward()
-        for param in policy_net.parameters():
+        for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
-        optimizer.step()
+        self.optimizer.step()
 
 
     def train(self):
@@ -236,16 +236,17 @@ class Agent:
         """
         # Initialize the environment and state (do nothing)
         frame, reward, done = self.game.step(0)
-        state = torch.stack([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
 
         # Start a training episode
-        for i in range(cfg.TRAIN_ITERATIONS):
+        for i in range(1, cfg.TRAIN_ITERATIONS):
 
             # Perform an action
-            action = self.select_action(state)
+            action = self.select_action(state, i)
             frame, reward, done = self.game.step(action)
-            next_state = torch.stack([state[1:], frame])
+            next_state = torch.cat([state[1:], frame])
+
 
             # Save experience to replay memory
             self.replay_memory.add(
@@ -254,20 +255,27 @@ class Agent:
 
             # Perform optimization
             # Sample random minibatch and update policy network
-            self.optimize()
+            self.optimize_model(i)
 
             # Move on to the next state
             state = next_state
 
             # Update the target network
             if i % cfg.TARGET_NETWORK_UPDATE_FREQ == 0:
-                target_net.load_state_dict(policy_net.state_dict())
+                self.target_net.load_state_dict(self.policy_net.state_dict())
 
             # Save network
-            if i % SAVE_NETWORK_FREQ == 0:
-                save_checkpoint(target_net.state_dict())
+            if i % cfg.SAVE_NETWORK_FREQ == 0:
+                if not os.path.exists('results'):
+                    os.mkdir('results')
+                torch.save(self.target_net.state_dict(), f'results/{str(i).zfill(7)}.pt')
 
 
     def play_game():
         return None
+
+
+if __name__ == '__main__':
+    x = Agent()
+    x.train()
 
