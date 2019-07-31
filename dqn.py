@@ -12,49 +12,42 @@ import random
 import torch
 import numpy as np 
 import tensorboardX
+from collections import namedtuple
 
 import config as cfg
-from game.main import Game 
+from game.wrapper import Game 
 
-#TODO Plot episode durations
-class DQN(nn.Module):
+
+
+class DQN(torch.nn.Module):
 
     def __init__(self):
         """
         Initialize a Deep Q-Network instance.
+        Uses the same parameters as specified in the paper.
         """
-        # Game screenshot dimensions
-        self.h = cfg.FRAME_SIZE
-        self.w = cfg.FRAME_SIZE
-
-        # The number of "channels" of the input. In DQN, the # channels refers to the agent history length. The number of most recent frames experienced by the agent that are given as input to the Q network.
-        self.n_channels = cfg.AGENT_HISTORY_LENGTH
-
-        # Number of output actions. In flappy bird, this is either do nothing or flap wings.
-        self.n_actions = cfg.N_ACTIONS
+        super(DQN, self).__init__()
         
-
-        # Build the network. Used the same parameters as specified in the paper.
-        self.conv1 = torch.nn.Conv2d(self.n_channels, 32, 8, 4)
-        self.relu1 = nn.ReLU()
+        self.conv1 = torch.nn.Conv2d(cfg.AGENT_HISTORY_LENGTH, 32, 8, 4)
+        self.relu1 = torch.nn.ReLU()
         self.conv2 = torch.nn.Conv2d(32, 64, 4, 2)
-        self.relu2 = nn.ReLU()
+        self.relu2 = torch.nn.ReLU()
         self.conv3 = torch.nn.Conv2d(64, 64, 3, 1)
-        self.relu3 = nn.ReLU()
+        self.relu3 = torch.nn.ReLU()
         self.fc4 = torch.nn.Linear(3136, 512) # TODO: Don't hard code
-        self.relu4 = nn.ReLU()
-        self.fc5 = torch.nn.Linear(512, self.n_actions)
+        self.relu4 = torch.nn.ReLU()
+        self.fc5 = torch.nn.Linear(512, cfg.N_ACTIONS)
 
 
     def forward(self, x):
         """
-        Forward pass of the network to compute the Q-value for some given input states.
+        Forward pass to compute Q-values for given input states.
 
         Arguments:
             x (tensor): minibatch of input states
 
         Returns:
-            tensor: Q-values for every possible action taken in the input states x
+            tensor: state-action values of size (batch_size, n_actions)
         """
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
@@ -65,16 +58,16 @@ class DQN(nn.Module):
         return x
 
 
+
+Experience = namedtuple('Experience', ('state', 'action', 'reward' 'next_state', 'done'))
+
 class ReplayMemory():
 
     def __init__(self):
         """
         Initialize a replay memory instance.
-        This allows the agent to apply Q-learning updates over a sampling ot its experiences. This allows for several unique advantages:
-            - Greater data efficiency since each step of experience is potentially used in many weight updates.
-            - Reduces variance of the DQN updates since randomizing the samples breaks time correlations between consecutive samples.
-            - Smooths out learning and avoids oscillation or divergence in network parameters since the behavior distribution is averaged over many of its previous states.
-
+        Used by agent to create minibatches of experiences. Resuts in greater 
+        data efficiency, reduced update variance, and smoother learning.
         """
         self.memory = []
         self.capacity = cfg.REPLAY_MEMORY_SIZE
@@ -85,9 +78,8 @@ class ReplayMemory():
         Add an experience to replay memory.
 
         Arguments:
-            experience (list): The [state, action, reward, next_state, done] transition of the most recent step
+            experience (Experience): add experience to replay memory 
         """
-        # Add the experience to replay memory
         self.memory.append(experience)
 
         # Remove oldest experience if replay memory full
@@ -100,20 +92,27 @@ class ReplayMemory():
         Sample some transitions from replay memory.
 
         Arguments:
-            batch_size (int): the number of experiences to sample from replay memory
+            batch_size (int): # of experiences to sample from replay memory
 
         Returns:
-            list [Experience]: list of random experiences if there are enough available, else None
+            dict: dictionary of random experiences if there are enough available, else None
         """
         if batch_size > len(self.memory):
             return None
 
+        # Sample a batch
         sample = random.sample(self.memory, batch_size)
+
+        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+        # detailed explanation). This converts batch-array of Transitions
+        # to Transition of batch-arrays.
+        sample = Experience(*zip(*sample))
+
         return {
-            'state': sample[:,0],
+            'state': torch.stack(sample.state),
             'action': sample[:,1],
             'reward': sample[:,2],
-            'next_state': sample[:,3],
+            'next_state': torch.stack(sample.next_state),
             'done': sample[:,4]
         }
 
@@ -123,15 +122,24 @@ class Agent:
     def __init__(self):
         """
         Initialize an agent instance.
-        The agent will learn an optimal policy that will allow it to play the game.
         """
-        self.replay_memory = ReplayMemory()
-        self.epsilon = np.logspact(math.log(INITIAL_EXPLORATION), math.log(FINAL_EXPLORATION), num=FINAL_EXPLORATION_FRAME, base=math.e)
 
+        # Replay memory buffer
+        self.replay_memory = ReplayMemory()
+
+        # Epsilon used for selecting actions
+        self.epsilon = np.logspact(
+            math.log(INITIAL_EXPLORATION), 
+            math.log(FINAL_EXPLORATION), 
+            num=FINAL_EXPLORATION_FRAME, 
+            base=math.e
+        )
+
+        # Create policy and target DQNs
         self.target_net = DQN()
         self.policy_net = DQN()
         self.target_net.load_state_dict(policy_net.state_dict())
-        self/target_net.eval()
+        self.target_net.eval()
 
         # The optimizer
         self.optimizer = torch.optim.RMSprop(
@@ -148,12 +156,10 @@ class Agent:
 
         self.device = cfg.DEVICE
 
+        # The flappy bird game instance
         self.game = Game()
 
-        # Number of parameter updates so far
-        self.steps = 0
-
-        # Log
+        # Log to tensorBoard
         self.writer = SummaryWriter('log')
 
         # Loss
@@ -162,10 +168,11 @@ class Agent:
 
     def select_action(self, state):
         """
-        Use epsilon-greedy exploration to select the next action. Controls exploration vs. exploitatioin in the network.
+        Use epsilon-greedy exploration to select the next action. 
+        Controls exploration vs. exploitatioin in the network.
 
         Arguments:
-            action_space (tensor): 
+            state (tensor): 
         Returns:
             tensor: 
         """
@@ -195,20 +202,21 @@ class Agent:
 
         # Compute mask of non-final states
 
-        # Use policy_net to find best action
-        best_action = torch.argmax(self.policy_net(batch['state']))
-        # Use target_net to get y_batch
-        q_batch_expected = 
-        # Use policy_net on best action to get q_batch
+        # Find best action, q-values using policy_net
+        state_action_values = self.policy_net(batch['state'])
+        best_action = torch.argmax(self.policy_net(batch['state']), dim=1)
+        q_batch = 
 
-        # Compute Q-value using policy net, Q(s_t, a)
-        q_batch = torch.sum(self.policy_net(batch['state']) * batch['action'])
-
-        # y_batch = expected q_batch
+        # Get y_batch (expected q_batch) using best action on target_net
         # Compute expected Q-value y using target net. Using a  network with an older set of parameters adds a delay between the time an update to the network is made and the time the update affects targets y, stabilizing training
         q_batch_old = self.target_net(batch['state'])
         y_batch = batch['reward'] + cfg.DISCOUNT_FACTOR * q_batch_old
 
+        # Get q_batch using policyUse policy_net on best action to get q_batch
+        # Compute Q-value using policy net, Q(s_t, a)
+        q_batch = torch.sum(self.policy_net(batch['state']) * batch['action'])
+
+        
         # Clip the reward to be between -1 and 1 for further training stability 
 
         # Compute loss
@@ -228,21 +236,21 @@ class Agent:
         """
         # Initialize the environment and state (do nothing)
         frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        state = torch.stack([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
 
         # Start a training episode
         for i in range(cfg.TRAIN_ITERATIONS):
-            # Update step counter
-            self.steps = i
 
             # Perform an action
             action = self.select_action(state)
             frame, reward, done = self.game.step(action)
-            next_state = torch.cat(state[1:,:,:], frame)
+            next_state = torch.stack([state[1:], frame])
 
             # Save experience to replay memory
-            self.replay_memory.add([state, action, reward, next_state, done])
+            self.replay_memory.add(
+                Experience(state, action, reward, next_state, done)
+            )
 
             # Perform optimization
             # Sample random minibatch and update policy network
@@ -252,11 +260,11 @@ class Agent:
             state = next_state
 
             # Update the target network
-            if self.steps % cfg.TARGET_NETWORK_UPDATE_FREQ == 0:
+            if i % cfg.TARGET_NETWORK_UPDATE_FREQ == 0:
                 target_net.load_state_dict(policy_net.state_dict())
 
             # Save network
-            if self.steps % SAVE_NETWORK_FREQ == 0:
+            if i % SAVE_NETWORK_FREQ == 0:
                 save_checkpoint(target_net.state_dict())
 
 
