@@ -13,3 +13,5 @@ Other package versions would probably work, I'm just listing my tested configura
 - DQN: https://deepmind.com/research/publications/human-level-control-through-deep-reinforcement-learning/
     - https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
     - https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial
+
+- A3C: https://arxiv.org/pdf/1602.01783v1.pdf

@@ -18,7 +18,8 @@ from collections import namedtuple
 import config as cfg
 from game.wrapper import Game 
 
-
+# TODO: Play loop
+# TODO: Plot training episode times/cumulative reward
 
 class DQN(torch.nn.Module):
 
@@ -110,11 +111,11 @@ class ReplayMemory():
         sample = Experience(*zip(*sample))
 
         return {
-            'state': torch.stack(sample.state),
-            'action': torch.tensor(sample.action).unsqueeze(1),
-            'reward': torch.tensor(sample.reward),
-            'next_state': torch.stack(sample.next_state),
-            'done': torch.tensor(sample.done),
+            'state': torch.stack(sample.state).to(cfg.DEVICE),
+            'action': torch.tensor(sample.action).unsqueeze(1).to(cfg.DEVICE),
+            'reward': torch.tensor(sample.reward).to(cfg.DEVICE),
+            'next_state': torch.stack(sample.next_state).to(cfg.DEVICE),
+            'done': torch.tensor(sample.done).to(cfg.DEVICE),
         }
 
 
@@ -137,8 +138,8 @@ class Agent:
         )
 
         # Create policy and target DQNs
-        self.target_net = DQN()
-        self.policy_net = DQN()
+        self.target_net = DQN().to(cfg.DEVICE)
+        self.policy_net = DQN().to(cfg.DEVICE)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
@@ -185,19 +186,20 @@ class Agent:
 
         # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
         if random.random() < epsilon:
-            return random.randrange(cfg.N_ACTIONS)
+            return np.random.choice(cfg.N_ACTIONS, p=[0.9, 0.1])
         else:
             with torch.no_grad():
                 return torch.argmax(self.policy_net(state), dim=1)[0]
 
 
-    def optimize_model(self, step):
+    def optimize_model(self):
         """
         Performs a single step of optimization.
         Samples a minibatch from replay memory and uses that to update the policy_net.
 
-        Arguments: 
-            step (int)
+
+        Returns:
+            loss (float)
         """
         # Sample a batch [state, action, reward, next_state]
         batch = self.replay_memory.sample(cfg.MINIBATCH_SIZE)
@@ -219,9 +221,7 @@ class Agent:
             )
 
         # Compute loss
-        loss = self.loss(q_batch, y_batch)
-        print(step, loss.item())
-        self.writer.add_scalar('loss', loss, step)
+        loss = self.loss(q_batch, y_batch.to(cfg.DEVICE))
 
         # Optimize model
         self.optimizer.zero_grad()
@@ -230,23 +230,28 @@ class Agent:
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
+        return loss
+
 
     def train(self):
         """
         """
+        # Episode lengths
+        episode_length = []
+        eplen = 0
+
         # Initialize the environment and state (do nothing)
         frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)]).to(cfg.DEVICE)
 
 
         # Start a training episode
         for i in range(1, cfg.TRAIN_ITERATIONS):
 
             # Perform an action
-            action = self.select_action(state, i)
+            action = self.select_action(state.to(cfg.DEVICE), i)
             frame, reward, done = self.game.step(action)
-            next_state = torch.cat([state[1:], frame])
-
+            next_state = torch.cat([state[1:], frame.to(cfg.DEVICE)])
 
             # Save experience to replay memory
             self.replay_memory.add(
@@ -255,7 +260,7 @@ class Agent:
 
             # Perform optimization
             # Sample random minibatch and update policy network
-            self.optimize_model(i)
+            loss = self.optimize_model()
 
             # Move on to the next state
             state = next_state
@@ -269,6 +274,18 @@ class Agent:
                 if not os.path.exists('results'):
                     os.mkdir('results')
                 torch.save(self.target_net.state_dict(), f'results/{str(i).zfill(7)}.pt')
+
+                np.save('eplen.npy', episode_length)
+
+            # Write results to log
+            if i % 100 == 0:
+                self.writer.add_scalar('loss', loss, step)
+
+            eplen += 1
+            if done:
+                print(i, eplen)
+                self.writer.add_scalar('episode_length', eplen, step)
+                eplen = 0
 
 
     def play_game():

@@ -43,7 +43,7 @@ NO_OP_MAX = 30
 N_ACTIONS = 2
 
 # 'cuda' or 'cpu'
-DEVICE = 'cpu'
+DEVICE = 'cuda'
 
 FRAME_SIZE = 84
 
