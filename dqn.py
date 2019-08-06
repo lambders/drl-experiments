@@ -28,13 +28,13 @@ class DQN(torch.nn.Module):
         super(DQN, self).__init__()
         
         self.conv1 = torch.nn.Conv2d(cfg.AGENT_HISTORY_LENGTH, 32, 8, 4)
-        self.relu1 = torch.nn.ReLU()
+        self.relu1 = torch.nn.ReLU(inplace=True)
         self.conv2 = torch.nn.Conv2d(32, 64, 4, 2)
-        self.relu2 = torch.nn.ReLU()
+        self.relu2 = torch.nn.ReLU(inplace=True)
         self.conv3 = torch.nn.Conv2d(64, 64, 3, 1)
-        self.relu3 = torch.nn.ReLU()
+        self.relu3 = torch.nn.ReLU(inplace=True)
         self.fc4 = torch.nn.Linear(3136, 512) # TODO: Don't hard code
-        self.relu4 = torch.nn.ReLU()
+        self.relu4 = torch.nn.ReLU(inplace=True)
         self.fc5 = torch.nn.Linear(512, cfg.N_ACTIONS)
 
 
@@ -83,7 +83,7 @@ class ReplayMemory():
 
         # Remove oldest experience if replay memory full
         if len(self.memory) > self.capacity:
-            replay_memory.pop(0)
+            self.memory.pop(0)
 
 
     def sample(self, batch_size):

@@ -7,7 +7,7 @@ Most values were taken directly from the paper.
 MINIBATCH_SIZE = 32
 
 # SGD updates are sampled from this number of most recent frames
-REPLAY_MEMORY_SIZE = 1000000
+REPLAY_MEMORY_SIZE = 10000
 
 # Number of most recent frames experienced by the agent that are given as input to the Q network
 AGENT_HISTORY_LENGTH = 4
@@ -31,8 +31,8 @@ LEARNING_RATE = 1e-6 #0.00025
 # MIN_SQUARED_GRADIENT = 0.01
 
 # Epsilon-greedy exploration parameters
-INITIAL_EXPLORATION = 1
-FINAL_EXPLORATION = 0.1
+INITIAL_EXPLORATION = 0.1
+FINAL_EXPLORATION = 0.0001
 FINAL_EXPLORATION_FRAME = 1000000
 
 # Uniform random policy is run for this number of frames before learning starts and the resulting experience is used to populate the replay memory
