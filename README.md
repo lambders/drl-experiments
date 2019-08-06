@@ -9,6 +9,13 @@ Other package versions would probably work, I'm just listing my tested configura
 
 ## To Run
 
+## Notes on DQN
+I had difficulty getting the network to converge. Here are some things I did to help:
+- For the optimizer, I used Adam instead of RMSProp that was used in the paper (inspired by nevenp's repo). 
+- Also, to select random actions, I gave higher weight to the "do nothing" action since that action is used quite a bit more often than the "flap" action (inspired by xmfbit's repo).
+
+## Results
+
 ## References
 - DQN: https://deepmind.com/research/publications/human-level-control-through-deep-reinforcement-learning/
     - https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html

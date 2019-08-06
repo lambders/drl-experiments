@@ -1,8 +1,5 @@
 """
 Implementation of Deep Q-Networks by the Google Brain team.
-
-Implementor: Amanda Vu
-
 Reference:
     "Human-Level Control Through Deep Reinforcement Learning" by Mnih et al. 
 """
@@ -144,17 +141,17 @@ class Agent:
         self.target_net.eval()
 
         # The optimizer
-        self.optimizer = torch.optim.RMSprop(
-            params = self.policy_net.parameters(),
-            lr = cfg.LEARNING_RATE,
-            momentum = cfg.GRADIENT_MOMENTUM,
-            alpha = cfg.SQUARED_GRADIENT_MOMENTUM,
-            eps = cfg.MIN_SQUARED_GRADIENT
-        )
-        # self.optimizer = torch.optim.Adam(
-        #     policy_net.parameters(),
-        #     lr = cfg.LEARNING_RATE
+        # self.optimizer = torch.optim.RMSprop(
+        #     params = self.policy_net.parameters(),
+        #     lr = cfg.LEARNING_RATE,
+        #     momentum = cfg.GRADIENT_MOMENTUM,
+        #     alpha = cfg.SQUARED_GRADIENT_MOMENTUM,
+        #     eps = cfg.MIN_SQUARED_GRADIENT
         # )
+        self.optimizer = torch.optim.Adam(
+            self.policy_net.parameters(),
+            lr = cfg.LEARNING_RATE
+        )
 
         self.device = cfg.DEVICE
 
@@ -182,7 +179,7 @@ class Agent:
         # Make state have a batch size of 1
         state = state.unsqueeze(0)
         # Select epsilon
-        epsilon = self.epsilon[min(step, cfg.FINAL_EXPLORATION_FRAME)]
+        epsilon = self.epsilon[min(step, cfg.FINAL_EXPLORATION_FRAME-1)]
 
         # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
         if random.random() < epsilon:
@@ -279,12 +276,12 @@ class Agent:
 
             # Write results to log
             if i % 100 == 0:
-                self.writer.add_scalar('loss', loss, step)
+                self.writer.add_scalar('loss', loss, i)
 
             eplen += 1
             if done:
                 print(i, eplen)
-                self.writer.add_scalar('episode_length', eplen, step)
+                self.writer.add_scalar('episode_length', eplen, i)
                 eplen = 0
 
 

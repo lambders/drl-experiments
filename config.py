@@ -1,4 +1,7 @@
-"""The hyperparameters used for training the DQN. All values were taken from the paper."""
+"""
+The hyperparameters used for training the DQN. 
+Most values were taken directly from the paper.
+"""
 
 # Number of training cases over which each SGD update is computed
 MINIBATCH_SIZE = 32
@@ -16,16 +19,16 @@ TARGET_NETWORK_UPDATE_FREQ = 10000
 DISCOUNT_FACTOR = 0.99
 
 # Repeat each action selected by the agent this many times. 
-ACTION_REPEAT = 4
+# ACTION_REPEAT = 4
 
 # Number of actions selected by the agent between successive SGD updates.
-UPDATE_FREQUENCY = 4
+# UPDATE_FREQUENCY = 4
 
 # RMSProp parameters
-LEARNING_RATE = 0.00025
-GRADIENT_MOMENTUM = 0.95
-SQUARED_GRADIENT_MOMENTUM = 0.95
-MIN_SQUARED_GRADIENT = 0.01
+LEARNING_RATE = 1e-6 #0.00025
+# GRADIENT_MOMENTUM = 0.95
+# SQUARED_GRADIENT_MOMENTUM = 0.95
+# MIN_SQUARED_GRADIENT = 0.01
 
 # Epsilon-greedy exploration parameters
 INITIAL_EXPLORATION = 1
@@ -36,14 +39,14 @@ FINAL_EXPLORATION_FRAME = 1000000
 REPLAY_START_SIZE = 500000
 
 # Maximum number of "do nothing" actions to be performed by the agent at the start of an episode
-NO_OP_MAX = 30
+# NO_OP_MAX = 30
 
 # Added by me!
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
 
 # 'cuda' or 'cpu'
-DEVICE = 'cuda'
+DEVICE = 'cpu'
 
 FRAME_SIZE = 84
 
