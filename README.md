@@ -11,8 +11,10 @@ Other package versions would probably work, I'm just listing my tested configura
 
 ## Notes on DQN
 I had difficulty getting the network to converge. Here are some things I did to help:
-- For the optimizer, I used Adam instead of RMSProp that was used in the paper (inspired by nevenp's repo). 
+- I adjusted the epsilon-greedy exploration parameters to choose learned actions more often than random actions (inspired by nevenp's repo). I am assuming this is because Flappy Bird is a simple game and learns optimal actions more quickly. 
+- I replaced RMSProp with Adam optimizer.
 - Also, to select random actions, I gave higher weight to the "do nothing" action since that action is used quite a bit more often than the "flap" action (inspired by xmfbit's repo).
+- I'm guessing that the flappy
 
 ## Results
 

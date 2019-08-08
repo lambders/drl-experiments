@@ -130,7 +130,7 @@ class Agent:
         self.epsilon = np.logspace(
             math.log(cfg.INITIAL_EXPLORATION), 
             math.log(cfg.FINAL_EXPLORATION), 
-            num=cfg.FINAL_EXPLORATION_FRAME, 
+            num=cfg.TRAIN_ITERATIONS, 
             base=math.e
         )
 
@@ -179,11 +179,11 @@ class Agent:
         # Make state have a batch size of 1
         state = state.unsqueeze(0)
         # Select epsilon
-        epsilon = self.epsilon[min(step, cfg.FINAL_EXPLORATION_FRAME-1)]
+        epsilon = self.epsilon[step]
 
         # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
         if random.random() < epsilon:
-            return np.random.choice(cfg.N_ACTIONS, p=[0.9, 0.1])
+            return np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
         else:
             with torch.no_grad():
                 return torch.argmax(self.policy_net(state), dim=1)[0]
@@ -212,19 +212,21 @@ class Agent:
         # the time an update to the network is made and the time the update 
         # affects targets y, stabilizing training
         q_batch_1, _ = torch.max(self.target_net(batch['next_state']), dim=1)
+        q_batch_1 = q_batch_1.detach()
         y_batch = batch['reward'] + cfg.DISCOUNT_FACTOR * q_batch_1 
         y_batch = torch.tensor(
             [batch['reward'][i] if batch['done'][i] else y_batch[i] for i in range(cfg.MINIBATCH_SIZE)]
             )
+        # y_batch = y_batch
 
         # Compute loss
-        loss = self.loss(q_batch, y_batch.to(cfg.DEVICE))
+        loss = self.loss(q_batch, y_batch)
 
         # Optimize model
         self.optimizer.zero_grad()
         loss.backward()
-        for param in self.policy_net.parameters():
-            param.grad.data.clamp_(-1, 1)
+        # for param in self.policy_net.parameters():
+        #     param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
         return loss
@@ -247,6 +249,7 @@ class Agent:
 
             # Perform an action
             action = self.select_action(state.to(cfg.DEVICE), i)
+            # print(action)
             frame, reward, done = self.game.step(action)
             next_state = torch.cat([state[1:], frame.to(cfg.DEVICE)])
 

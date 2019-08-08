@@ -203,7 +203,7 @@ class ActorCriticThread(mp.Process):
 
             eplen += 1
             if done:
-                print(i, eplen)
+                print(i, eplen, reward, done)
                 self.writer.add_scalar('episode_length', eplen, i)
                 eplen = 0
 

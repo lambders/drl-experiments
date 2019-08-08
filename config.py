@@ -25,15 +25,15 @@ DISCOUNT_FACTOR = 0.99
 # UPDATE_FREQUENCY = 4
 
 # RMSProp parameters
-LEARNING_RATE = 1e-6 #0.00025
+LEARNING_RATE = 1e-4 #0.00025
 # GRADIENT_MOMENTUM = 0.95
 # SQUARED_GRADIENT_MOMENTUM = 0.95
 # MIN_SQUARED_GRADIENT = 0.01
 
 # Epsilon-greedy exploration parameters
-INITIAL_EXPLORATION = 0.1
+INITIAL_EXPLORATION = 0.8
 FINAL_EXPLORATION = 0.0001
-FINAL_EXPLORATION_FRAME = 1000000
+# FINAL_EXPLORATION_FRAME = 1000000
 
 # Uniform random policy is run for this number of frames before learning starts and the resulting experience is used to populate the replay memory
 REPLAY_START_SIZE = 500000
