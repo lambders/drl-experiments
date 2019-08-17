@@ -191,7 +191,7 @@ class Agent:
             state = state.cuda()
 
         # Select epsilon
-        step = min(step, cfg.FINAL_EXPLORATION_FRAME)
+        step = min(step, cfg.FINAL_EXPLORATION_FRAME - 1)
         epsilon = self.epsilon[step]
 
         # Perform random action with probability self.epsilon. Otherwise, select
@@ -279,7 +279,7 @@ class Agent:
             if i % cfg.SAVE_NETWORK_FREQ == 0:
                 if not os.path.exists(cfg.EXPERIMENT_NAME):
                     os.mkdir(cfg.EXPERIMENT_NAME)
-                torch.save(self.target_net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
+                torch.save(self.net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
 
             # Write results to log
             if i % 100 == 0:
@@ -287,7 +287,10 @@ class Agent:
 
             eplen += 1
             if done:
-                print(i, eplen)
+                if i < cfg.FINAL_EXPLORATION_FRAME:
+                    print(i, eplen, self.epsilon[i])
+                else:
+                    print(i, eplen)
                 self.writer.add_scalar('episode_length', eplen, i)
                 eplen = 0
 
