@@ -19,8 +19,13 @@ I had difficulty getting the network to converge. Here are some things I did to 
 ## Results
 
 ## References
-- DQN: https://deepmind.com/research/publications/human-level-control-through-deep-reinforcement-learning/
-    - https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
-    - https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial
+- DQN: 
+    - Paper: https://deepmind.com/research/publications/human-level-control-through-deep-reinforcement-learning/
+    - PyTorch tutorial: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
+    - nevenp's blog post: https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial
 
-- A3C: https://arxiv.org/pdf/1602.01783v1.pdf
+- A3C: 
+    - Paper: https://arxiv.org/pdf/1602.01783v1.pdf
+    - MorvanZhou's implementation: https://github.com/MorvanZhou/pytorch-A3C
+    
+- TRPO/PPO

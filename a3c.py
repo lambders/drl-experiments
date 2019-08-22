@@ -12,8 +12,12 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from collections import namedtuple
 
-import config_a3c as cfg
+import config.a3c as cfg
 from game.wrapper import Game 
+
+# Global parameter which tells us if we have detected a CUDA capable device
+CUDA_DEVICE = torch.cuda.is_available()
+
 
 
 class ActorCriticNetwork(torch.nn.Module):
@@ -34,7 +38,6 @@ class ActorCriticNetwork(torch.nn.Module):
         self.actor = torch.nn.Linear(256, cfg.N_ACTIONS)
         self.crtic = torch.nn.Linear(256, 1)
         self.softmax1 = torch.nn.SoftMax()
-        # The model used by actor-critic agents had two set of outputs – a softmax output with one entry per action representing the probability of selecting the action, and a single linear output representing the value function
 
 
     def forward(self, x):
@@ -45,8 +48,8 @@ class ActorCriticNetwork(torch.nn.Module):
             x (tensor): minibatch of input states
 
         Returns:
-            tensor: state-action values of size (batch_size, n_actions)
-            tensor: value function of size (batch_size, 1)
+            tensor: prob of selecting an action, of size (batch_size, n_actions)
+            tensor: single linear output representing the value fn (batch_size, 1)
         """
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
@@ -57,40 +60,62 @@ class ActorCriticNetwork(torch.nn.Module):
         return probability, value
 
 
+class SharedAdam(torch.optim.Adam):
+    def __init__(self, params):
+        """
+        Initialized a shared Adam optimizer instance.
+        All the ActorCritic threads will subscribe to this optimizer and update
+        in an asynchronous manner.
 
-class ActorCriticThread(mp.Process):
+        Arguments:
+            params (): network parameters to optimize
+        """
+        super(SharedAdam, self).__init__(params, lr=cfg.LEARNING_RATE)
+
+        # State initialization
+        for group in self.param_groups:
+            for p in group['params']:
+                state = self.state[p]
+                state['step'] = 0
+                state['exp_avg'] = torch.zeros_like(p.data)
+                state['exp_avg_sq'] = torch.zeros_like(p.data)
+
+                # share in memory
+                state['exp_avg'].share_memory_()
+                state['exp_avg_sq'].share_memory_()
+
+
+
+class ActorCriticWorker(torch.multiprocessing.Process):
 
     def __init__(self):
         """
-        Initialize an actor thread subprocess. 
-        A bit of a misnoomer in this case since we are using multiprocessing 
-        instead of multithreading. The reasoning behind this is that pyTorch
-        has better support for multiprocessing (i.e., built-in library).
+        Initialize an actor-critic worker. 
         """
+
         # Epsilon used for selecting actions
-        self.epsilon = np.logspace(
-            math.log(cfg.INITIAL_EXPLORATION), 
-            math.log(cfg.FINAL_EXPLORATION), 
-            num=cfg.FINAL_EXPLORATION_FRAME, 
-            base=math.e
+        self.epsilon = np.linspace(
+            cfg.INITIAL_EXPLORATION, 
+            cfg.FINAL_EXPLORATION, 
+            cfg.FINAL_EXPLORATION_FRAME
         )
 
         # Create local ACNetwork
-        self.net = ActorCriticNetwork().to(cfg.DEVICE)
+        self.net = ActorCriticNetwork()
+        if CUDA_DEVICE:
+            self.net = self.net.cuda()
 
         # The optimizer
-        self.optimizer = torch.optim.Adam(
-            self.policy_net.parameters(),
-            lr = cfg.LEARNING_RATE
-        )
-
-        self.device = cfg.DEVICE
+        # self.optimizer = torch.optim.Adam(
+        #     self.policy_net.parameters(),
+        #     lr = cfg.LEARNING_RATE
+        # )
 
         # The flappy bird game instance
         self.game = Game(cfg.FRAME_SIZE)
 
         # Log to tensorBoard
-        self.writer = SummaryWriter('log')
+        self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
 
         # Loss
         self.loss = torch.nn.MSELoss()
@@ -99,28 +124,24 @@ class ActorCriticThread(mp.Process):
         self.buffer = {'state': [], 'action': [], 'reward': [], 'value': []}
 
 
-    def select_action(self, state, step):
+    def select_action(self, state):
         """
-        Use epsilon-greedy exploration to select the next action. 
-        Controls exploration vs. exploitatioin in the network.
+        Select the next action. 
 
         Arguments:
-            state (tensor): 
-            step (int): 
+            state (tensor): stack of four frames
+
         Returns:
-            int: 
+            int: 0 if no flap, 1 if flap
         """
         # Make state have a batch size of 1
         state = state.unsqueeze(0)
-        # Select epsilon
-        epsilon = self.epsilon[min(step, cfg.FINAL_EXPLORATION_FRAME-1)]
+        if CUDA_DEVICE:
+            state = state.cuda()
 
-        # Perform random action with probability self.epsilon. Otherwise, select the action which yields the maximum reward.
-        if random.random() < epsilon:
-            return np.random.choice(cfg.N_ACTIONS, p=[0.9, 0.1])
-        else:
-            with torch.no_grad():
-                return torch.argmax(self.net(state), dim=1)[0]
+        # Select action according to probability
+        prob, _ = self.net(state)[0]
+        return np.random.choice(np.arange(cfg.N_ACTIONS, 1, p=prob))
 
 
     def optimize_model(self, next_state, done):
@@ -147,11 +168,17 @@ class ActorCriticThread(mp.Process):
         # Calculate loss
         loss = self.net.loss(self.buffer)
 
-        # Calculate gradients
+        # Calculate local gradients and push local parameters to global
         self.optimizer.zero_grad()
         loss.backward()
 
+        for lp, gp in zip(self.net.parameters(), gnet.parameters()):
+            gp._grad = lp.grad
+
         self.optimizer.step()
+
+        # pull global parameters
+        self.net.load_state_dict(gnet.state_dict())
 
         # Reset the buffers
         self.buffer = dict.fromkeys(self.buffer, [])
@@ -187,15 +214,14 @@ class ActorCriticThread(mp.Process):
             # Sample random minibatch and update policy network
             loss = self.optimize_model(done)
 
-            # Synchronize networks
-            if i % cfg.TARGET_NET_UPDATE_FREQ == 0:
-                self.target_net.load_state_dict(self.policy_net.state_dict())
-
             # Save network
-            if i % cfg.SAVE_NET_FREQ == 0:
-                if not os.path.exists('results'):
-                    os.mkdir('results')
-                torch.save(self.target_net.state_dict(), f'results/{str(i).zfill(7)}.pt')
+            # if i % cfg.SAVE_NET_FREQ == 0:
+            #     if not os.path.exists('results'):
+            #         os.mkdir('results')
+            #     torch.save(self.target_net.state_dict(), f'results/{str(i).zfill(7)}.pt')
+            # Update global network
+            if i % cfg.GLOBAL_HET_UPDATE_FREQ == 0:
+                push_and_pull(self.opt, self.lnet, self.gnet, done, s_, buffer_s, buffer_a, buffer_r, GAMMA)
 
             # Write results to log
             if i % 100 == 0:
@@ -218,22 +244,32 @@ class ActorCriticThread(mp.Process):
 
 def Trainer():
     def __init__(self):
-        # The shared network for all local processes
-        # Make sure the shared network's parameters are available in multiprocessing
+        """
+        Create the training instance which will coordinate all the individual
+        ActorCriticWorker subprocesses.
+        """
+
+        # Global shared network
         self.net = ActorCriticNetwork()
         self.net.share_memory()
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(
-            self.net.parameters(),
-            lr = cfg.LEARNING_RATE
-        )
-        self.workers = [ActorCriticWorker() for i in range(cfg.NUM_ACTOR_LEARNER_THREADS)] 
+        self.optimizer = SharedAdam(self.net.parameters())
+
+        # Start the workers
+        self.workers = [ActorCriticWorker() for i in range(cfg.N_WORKERS)] 
+
 
     def train(self):
+        """
+        Start the global training loop
+        """
+        # Start the workers
         for worker in self.workers:
             worker.start()
 
+        # Parallel training
+        res = []
         while True:
             r = results_queue.get()
             if r is not None:
@@ -242,5 +278,8 @@ def Trainer():
                 break
         [w.join() for w in workers]
 
-            worker.net.load_state_dict(self.target_net.state_dict())
-            worker.train()
+
+
+if __name__ == '__main__':
+    x = Trainer()
+    x.train()

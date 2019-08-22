@@ -7,18 +7,20 @@ Reference:
 import os
 import math
 import random
-import torch
+import argparse
 import numpy as np 
-from tensorboardX import SummaryWriter
 from collections import namedtuple
 
-import config as cfg
-from game.wrapper import Game
-# from game.wrapper2 import Game
+import torch
+from tensorboardX import SummaryWriter
 
-# TODO: Play loop
-# TODO: Plot training episode times/cumulative reward
+import config.dqn as cfg
+from game.wrapper import Game
+
+# Global parameter which tells us if we have detected a CUDA capable device
 CUDA_DEVICE = torch.cuda.is_available()
+
+
 
 class DQN(torch.nn.Module):
 
@@ -41,9 +43,16 @@ class DQN(torch.nn.Module):
 
 
     def init_weights(self, m):
+        """
+        Initialize the weights of the network.
+
+        Arguments:
+            m (tensor): layer instance 
+        """
         if type(m) == torch.nn.Conv2d or type(m) == torch.nn.Linear:
             torch.nn.init.uniform(m.weight, -0.01, 0.01)
             m.bias.data.fill_(0.01)
+
 
     def forward(self, x):
         """
@@ -135,6 +144,7 @@ class ReplayMemory():
         return sample_batch
 
 
+
 class Agent:
 
     def __init__(self):
@@ -152,9 +162,16 @@ class Agent:
             cfg.FINAL_EXPLORATION_FRAME
         )
 
-        # Create policy and target DQNs
+        # Create network
         self.net = DQN()
-        self.net.apply(self.net.init_weights)
+        if cfg.MODE == 'train':
+            self.net.apply(self.net.init_weights)
+            if cfg.CHECKPOINT_DIR:
+                self.net.load_state_dict(torch.load(cfg.CHECKPOINT_DIR))
+        if cfg.MODE == 'eval':
+            self.net.load_state_dict(torch.load(cfg.CHECKPOINT_DIR))
+            self.net.eval()
+
         if CUDA_DEVICE:
             self.net = self.net.cuda()
 
@@ -177,13 +194,14 @@ class Agent:
     def select_action(self, state, step):
         """
         Use epsilon-greedy exploration to select the next action. 
-        Controls exploration vs. exploitatioin in the network.
+        Controls exploration vs. exploitation in the network.
 
         Arguments:
-            state (tensor): 
-            step (int): 
+            state (tensor): stack of four frames
+            step (int): the current training step
+            
         Returns:
-            int: 
+            int: 0 if no flap, 1 if flap
         """
         # Make state have a batch size of 1
         state = state.unsqueeze(0)
@@ -206,7 +224,6 @@ class Agent:
         """
         Performs a single step of optimization.
         Samples a minibatch from replay memory and uses that to update the net.
-
 
         Returns:
             loss (float)
@@ -237,8 +254,6 @@ class Agent:
         # Optimize model
         self.optimizer.zero_grad()
         loss.backward()
-        # for param in self.policy_net.parameters():
-        #     param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
 
         return loss
@@ -256,7 +271,7 @@ class Agent:
         state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
         # Start a training episode
-        for i in range(1, cfg.TRAIN_ITERATIONS):
+        for i in range(2400001, cfg.TRAIN_ITERATIONS):
 
             # Perform an action
             action = self.select_action(state, i)
@@ -269,7 +284,6 @@ class Agent:
             )
 
             # Perform optimization
-            # Sample random minibatch and update policy network
             loss = self.optimize_model()
 
             # Move on to the next state
@@ -287,19 +301,46 @@ class Agent:
 
             eplen += 1
             if done:
-                if i < cfg.FINAL_EXPLORATION_FRAME:
-                    print(i, eplen, self.epsilon[i])
-                else:
-                    print(i, eplen)
                 self.writer.add_scalar('episode_length', eplen, i)
                 eplen = 0
 
 
-    def play_game():
-        return None
+    def play_game(self):
+        """
+        Play Flappy Bird using the trained network.
+        """
+
+        # Initialize the environment and state (do nothing)
+        frame, reward, done = self.game.step(0)
+        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+
+        # Start playing
+        while True:
+
+            # Perform an action
+            state = state.unsqueeze(0)
+            if CUDA_DEVICE:
+                state = state.cuda()
+            action = torch.argmax(self.net(state)[0])
+            frame, reward, done = self.game.step(action)
+            if CUDA_DEVICE:
+                frame = frame.cuda()
+            next_state = torch.cat([state[0][1:], frame])
+
+            # Move on to the next state
+            state = next_state
+
+            # If we lost, exit
+            if done:
+                break
+
 
 
 if __name__ == '__main__':
+
     x = Agent()
-    x.train()
+    if cfg.MODE == 'train':
+        x.train()
+    if cfg.MODE == 'eval':
+        x.play_game()
 
