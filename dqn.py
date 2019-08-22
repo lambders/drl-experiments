@@ -185,7 +185,8 @@ class Agent:
         self.game = Game(cfg.FRAME_SIZE) 
 
         # Log to tensorBoard
-        self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
+        if cfg.MODE == 'train':
+            self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
 
         # Loss
         self.loss = torch.nn.MSELoss()
