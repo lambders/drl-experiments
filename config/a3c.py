@@ -18,7 +18,13 @@ AGENT_HISTORY_LENGTH = 4
 LEARNING_RATE = 1e-6 
 
 # Entropy regularization weight
-ENTROPY_REG = 0.01
+ENTROPY_COEFF = 0.01
+
+# Value loss coefficient 
+VALUE_LOSS_COEFF = 0.5
+
+# Discount factor weight
+DISCOUNT = 0.99 ### TODO
 
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
@@ -34,3 +40,5 @@ TRAIN_ITERATIONS = 3000000
 
 # Name that will be used for the result folder name
 EXPERIMENT_NAME = 'easy'
+
+# 

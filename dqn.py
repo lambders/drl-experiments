@@ -272,7 +272,7 @@ class Agent:
         state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
         # Start a training episode
-        for i in range(2400001, cfg.TRAIN_ITERATIONS):
+        for i in range(1, cfg.TRAIN_ITERATIONS):
 
             # Perform an action
             action = self.select_action(state, i)
