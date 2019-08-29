@@ -141,16 +141,20 @@ class SharedAdam(torch.optim.Adam):
 
 class ActorCriticWorker(torch.multiprocessing.Process):
 
-    def __init__(self, global_net, shared_opt):
+    def __init__(self, id, global_net, shared_opt):
         """
         Initialize an actor-critic worker. 
 
         Arguments:
+            id (int): worker id
             global_net (torch.nn.Module): global network this instance will 
                 update periodically
             shared_optim (SharedAdam): global optimizer shared by all 
                 of the workers
         """
+        # Worker id
+        self.id = id
+
         # Global network
         self.global_net = global_net
 
@@ -174,9 +178,10 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
         # Buffer
         self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'entropy']}
+        self.buffer_length = 0
 
 
-    def optimize_model(self, value_1):
+    def optimize_model(self, next_state, done):
         """
         Performs a single step of optimization.
 
@@ -187,46 +192,45 @@ class ActorCriticWorker(torch.multiprocessing.Process):
         Returns:
             loss (float)
         """
-        buffer_len = len(self.buffer["reward"])
 
         # Forward pass through the net
-        _, _, value_1 = self.net(next_state)
+        batch_next_state = next_state.unsqueeze(0)
+        _, _, value_1 = self.net(batch_next_state)
 
         # Calculate the value of the next state
         if done:
             value_1 = 0
-        else:
-            value_1 = values[-1] 
 
         # Calculate the losses
         loss_value, loss_policy = 0, 0
         value_target = value_1
-        for i in reversed(range(buffer_len)):
-            value_target = cfg.GAMMA * value_target + self.buffer['reward'][i]
+        for i in reversed(range(self.buffer_length)):
+            value_target = cfg.DISCOUNT * value_target + self.buffer['reward'][i]
             advantage = value_target - self.buffer['value'][i]
 
             loss_value += advantage ** 2 
-            loss_policy += -self.buffer['action_probs'][i] * advantage - cfg.ENTROPY_REG * self.buffer['entropy'][i]
+            loss_policy += -self.buffer['action_prob'][i] * advantage - cfg.ENTROPY_COEFF * self.buffer['entropy'][i]
 
         # Total loss
-        loss = loss_policy + cfg.VALUE_LOSS_WEIGHT * loss_value
+        loss = loss_policy + cfg.VALUE_LOSS_COEFF * loss_value
 
         # Push local gradients to global network
-        self.optimizer.zero_grad()
+        self.shared_opt.zero_grad()
         loss.backward()
-        for lp, gp in zip(self.net.parameters(), gnet.parameters()):
+        for lp, gp in zip(self.net.parameters(), self.global_net.parameters()):
             gp._grad = lp.grad
-        self.optimizer.step()
+        self.shared_opt.step()
 
         # Pull global parameters
-        self.net.load_state_dict(gnet.state_dict())
+        self.net.load_state_dict(self.global_net.state_dict())
+
+        return loss
 
 
-    def run(self):
+    def train(self):
         """
         Main training loop.
         """
-        print("********************************")
         # Episode lengths
         episode_length = []
         eplen = 0
@@ -246,12 +250,12 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
             # Perform action according to action_probs
             selected_action = np.random.choice(
-                np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())
+                np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())[0]
             selected_action_prob = log_action_probs[selected_action]
-            frame, reward, done = self.game.step(action)
+            frame, reward, done = self.game.step(selected_action)
 
             # Calculate entropy
-            entropy = action_probs * log_action_probs
+            entropy = -torch.sum(action_probs * log_action_probs)
 
             # Update next state
             next_state = torch.cat([state[1:], frame])
@@ -261,24 +265,25 @@ class ActorCriticWorker(torch.multiprocessing.Process):
             self.buffer['action_prob'].append(selected_action_prob)
             self.buffer['reward'].append(reward)
             self.buffer['entropy'].append(entropy)
+            self.buffer_length += 1
 
             # Perform optimization
             # Update global and local networks
-            if i % cfg.GLOBAL_NET_UPDATE_FREQ == 0 or done:
+            if self.buffer_length == cfg.BUFFER_UPDATE_FREQ == 0 or done:
                 loss = self.optimize_model(next_state, done)
 
-            # Clear buffers
-            if len(self.buffer['state']) == cfg.BUFFER_UPDATE_FREQ:
+                # Clear buffers
                 self.buffer = dict.fromkeys(self.buffer, [])
+                self.buffer_length = 0
 
             # Write results to log
             if i % 100 == 0:
-                self.writer.add_scalar('loss', loss, i)
+                self.writer.add_scalar('loss/'+ str(self.id), loss, i)
 
             eplen += 1
             if done:
-                print(i, eplen, reward, done)
-                self.writer.add_scalar('episode_length', eplen, i)
+                print(self.id, i, eplen)
+                self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
                 eplen = 0
 
             # Move on to next state
@@ -287,6 +292,21 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
     def play_game():
         return None
+
+
+
+def actor_critic_worker_entrypoint(id, net, opt):
+    """
+    The entrypoint for a torch multiprocess. 
+    Must be at top level.
+
+    Args:
+        id (int): worker id
+        net (torch.nn.Module): shared network isntance
+        opt (torch.optim): shared optimizer
+    """
+    worker = ActorCriticWorker(id, net, opt)
+    worker.train()
 
 
 
@@ -305,8 +325,15 @@ class Trainer():
         self.opt = SharedAdam(self.net.parameters())
         self.opt.share_memory()
 
-        # Start the workers
-        self.workers = [ActorCriticWorker(self.net, self.opt) for i in range(cfg.N_WORKERS)] 
+        # Create the workers
+        torch.multiprocessing.set_start_method('spawn')
+        self.workers = [
+            torch.multiprocessing.Process(
+                target=actor_critic_worker_entrypoint, 
+                args=(i, self.net, self.opt)
+            )  
+            for i in range(cfg.N_WORKERS)
+        ] 
 
     def train(self):
         """
@@ -323,6 +350,5 @@ class Trainer():
 
 
 if __name__ == '__main__':
-    torch.manual_seed(2)
     x = Trainer()
     x.train()

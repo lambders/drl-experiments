@@ -3,13 +3,10 @@ The hyperparameters used for training the A3C Network.
 """
 
 # Number of actor-crtic workers
-N_WORKERS = 4
+N_WORKERS = 16
 
 # Refresh buffer after every x actions
 BUFFER_UPDATE_FREQ = 20
-
-# Number of frames until shared target network update
-GLOBAL_NET_UPDATE_FREQ = 40000
 
 # Number of frames in a state
 AGENT_HISTORY_LENGTH = 4
