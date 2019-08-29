@@ -3,15 +3,15 @@ The hyperparameters used for training the A3C Network.
 """
 
 # Number of actor-crtic workers
-N_WORKERS = 16
+N_WORKERS = 4
 
-# Methods performed updates after every x actions
-UPDATE_FREQ = 5
+# Refresh buffer after every x actions
+BUFFER_UPDATE_FREQ = 20
 
-# Nujmber of frames until shared target network update
+# Number of frames until shared target network update
 GLOBAL_NET_UPDATE_FREQ = 40000
 
-# Number of times an action is repeated
+# Number of frames in a state
 AGENT_HISTORY_LENGTH = 4
 
 # Optimizer parameter
@@ -24,7 +24,7 @@ ENTROPY_COEFF = 0.01
 VALUE_LOSS_COEFF = 0.5
 
 # Discount factor weight
-DISCOUNT = 0.99 ### TODO
+DISCOUNT = 0.99 
 
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
@@ -35,10 +35,8 @@ FRAME_SIZE = 84
 # Interval in iterations at which to save network weights
 SAVE_NETWORK_FREQ = 100000
 
-# Numbe rof iterations to train the network
+# Number of iterations to train the network
 TRAIN_ITERATIONS = 3000000
 
 # Name that will be used for the result folder name
-EXPERIMENT_NAME = 'easy'
-
-# 
+EXPERIMENT_NAME = 'exp_a3c'

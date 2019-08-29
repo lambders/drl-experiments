@@ -15,10 +15,7 @@ from collections import namedtuple
 import config.a3c as cfg
 from game.wrapper import Game 
 
-# Global parameter which tells us if we have detected a CUDA capable device
-CUDA_DEVICE = torch.cuda.is_available()
-
-
+# TODO: Log
 
 class ActorCriticNetwork(torch.nn.Module):
 
@@ -162,8 +159,9 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
         # Create local ACNetwork
         self.net = ActorCriticNetwork()
-        if CUDA_DEVICE:
-            self.net = self.net.cuda()
+
+        # Synchronize with shared model
+        self.net.load_state_dict(self.global_net.state_dict())
 
         # The flappy bird game instance
         self.game = Game(cfg.FRAME_SIZE)
@@ -175,42 +173,12 @@ class ActorCriticWorker(torch.multiprocessing.Process):
         self.loss = torch.nn.MSELoss()
 
         # Buffer
-        self.buffer = {k: [] for k in ['state', 'action', 'reward']}
+        self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'entropy']}
 
 
-    def select_action(self, state):
-        """
-        Select the next action. 
-
-        Arguments:
-            state (tensor): stack of four frames
-
-        Returns:
-            int: 0 if no flap, 1 if flap
-        """
-        # Set to evaluation mode
-        self.net.eval()
-
-        # Make state have a batch size of 1
-        state = state.unsqueeze(0)
-        if CUDA_DEVICE:
-            state = state.cuda()
-
-        # Select action according to probability
-        action_probs = self.net(state)[0].detach().numpy()
-        selected_action = np.random.choice(
-            np.arange(cfg.N_ACTIONS), 1, p=action_probs)
-
-        # Set back to train mode
-        self.net.train()
-
-        return selected_action
-
-
-    def optimize_model(self, next_state, done):
+    def optimize_model(self, value_1):
         """
         Performs a single step of optimization.
-        Samples a minibatch from replay memory and uses that to update the net.
 
         Arguments:
             next_state (tensor): next frame of the game
@@ -219,8 +187,10 @@ class ActorCriticWorker(torch.multiprocessing.Process):
         Returns:
             loss (float)
         """
+        buffer_len = len(self.buffer["reward"])
+
         # Forward pass through the net
-        action_probs, log_action_probs, values = self.net(next_state)
+        _, _, value_1 = self.net(next_state)
 
         # Calculate the value of the next state
         if done:
@@ -228,40 +198,35 @@ class ActorCriticWorker(torch.multiprocessing.Process):
         else:
             value_1 = values[-1] 
 
-        # Calculate discounted reward
-        reward = self.buffer['reward']
-        discounts = [self.GAMMA**i for i in range(len(reward))][::-1]
-        value_target = [r + gamma*value_1 for (r, gamma) in zip(reward, discounts)]
+        # Calculate the losses
+        loss_value, loss_policy = 0, 0
+        value_target = value_1
+        for i in reversed(range(buffer_len)):
+            value_target = cfg.GAMMA * value_target + self.buffer['reward'][i]
+            advantage = value_target - self.buffer['value'][i]
 
-        # Calculate value loss
-        advantage = value_target - value_1
-        loss_value = advantage ** 2
-
-        # Calculate policy loss
-        entropy = action_probs * log_action_probs
-        loss_policy = -log_action_probs * advantage - cfg.ENTROPY_REG * entropy
+            loss_value += advantage ** 2 
+            loss_policy += -self.buffer['action_probs'][i] * advantage - cfg.ENTROPY_REG * self.buffer['entropy'][i]
 
         # Total loss
         loss = loss_policy + cfg.VALUE_LOSS_WEIGHT * loss_value
 
-        # Calculate local gradients and push local parameters to global
+        # Push local gradients to global network
         self.optimizer.zero_grad()
         loss.backward()
         for lp, gp in zip(self.net.parameters(), gnet.parameters()):
             gp._grad = lp.grad
         self.optimizer.step()
 
-        # pull global parameters
+        # Pull global parameters
         self.net.load_state_dict(gnet.state_dict())
 
-        # Reset the buffers
-        self.buffer = dict.fromkeys(self.buffer, [])
 
-
-
-    def train(self):
+    def run(self):
         """
+        Main training loop.
         """
+        print("********************************")
         # Episode lengths
         episode_length = []
         eplen = 0
@@ -273,23 +238,38 @@ class ActorCriticWorker(torch.multiprocessing.Process):
         # Start a training episode
         for i in range(1, cfg.TRAIN_ITERATIONS):
 
-            # Perform an action
-            action = self.select_action(state)
+            # Forward pass through the net
+            self.net.eval()
+            batch_state = state.unsqueeze(0)
+            action_probs, log_action_probs, value = self.net(batch_state)
+            self.net.train()
+
+            # Perform action according to action_probs
+            selected_action = np.random.choice(
+                np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())
+            selected_action_prob = log_action_probs[selected_action]
             frame, reward, done = self.game.step(action)
+
+            # Calculate entropy
+            entropy = action_probs * log_action_probs
+
+            # Update next state
             next_state = torch.cat([state[1:], frame])
 
             # Save experience to buffer
-            self.buffer['state'].append(state)
-            self.buffer['action'].append(action)
+            self.buffer['value'].append(value)
+            self.buffer['action_prob'].append(selected_action_prob)
             self.buffer['reward'].append(reward)
+            self.buffer['entropy'].append(entropy)
 
             # Perform optimization
-            # Sample random minibatch and update policy network
-            loss = self.optimize_model(next_state, done)
-
             # Update global and local networks
-            if i % cfg.GLOBAL_NET_UPDATE_FREQ == 0 or done: # TODO:  or done?
-                self.synchronize_nets(self.opt, self.lnet, self.gnet, done, s_, buffer_s, buffer_a, buffer_r, GAMMA)
+            if i % cfg.GLOBAL_NET_UPDATE_FREQ == 0 or done:
+                loss = self.optimize_model(next_state, done)
+
+            # Clear buffers
+            if len(self.buffer['state']) == cfg.BUFFER_UPDATE_FREQ:
+                self.buffer = dict.fromkeys(self.buffer, [])
 
             # Write results to log
             if i % 100 == 0:
@@ -310,7 +290,7 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
 
 
-def Trainer():
+class Trainer():
     def __init__(self):
         """
         Create the training instance which will coordinate all the individual
@@ -323,12 +303,10 @@ def Trainer():
 
         # Optimizer
         self.opt = SharedAdam(self.net.parameters())
-        self.opt.shared_memory()
+        self.opt.share_memory()
 
         # Start the workers
-        self.workers = [ActorCriticWorker(target=ActorCriticWorker.train, 
-            args=(self.net, self.opt)) for i in range(cfg.N_WORKERS)] 
-
+        self.workers = [ActorCriticWorker(self.net, self.opt) for i in range(cfg.N_WORKERS)] 
 
     def train(self):
         """
@@ -337,19 +315,14 @@ def Trainer():
         # Start the workers
         for worker in self.workers:
             worker.start()
-
-        # Parallel training
-        res = []
-        while True:
-            r = results_queue.get()
-            if r is not None:
-                res.append(r)
-            else:
-                break
-        [w.join() for w in workers]
+        
+        # Finish jobs
+        for worker in self.workers:
+            worker.join()
 
 
 
 if __name__ == '__main__':
-    # x = ActorCriticWorker(None, None)
-    # x.train()
+    torch.manual_seed(2)
+    x = Trainer()
+    x.train()
