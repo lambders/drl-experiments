@@ -3,7 +3,7 @@ The hyperparameters used for training the A3C Network.
 """
 
 # Number of actor-crtic workers
-N_WORKERS = 16
+N_WORKERS = 8
 
 # Refresh buffer after every x actions
 BUFFER_UPDATE_FREQ = 20

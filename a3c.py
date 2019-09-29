@@ -139,7 +139,7 @@ class SharedAdam(torch.optim.Adam):
 
 
 
-class ActorCriticWorker(torch.multiprocessing.Process):
+class ActorCriticWorker():
 
     def __init__(self, id, global_net, shared_opt):
         """
@@ -269,19 +269,25 @@ class ActorCriticWorker(torch.multiprocessing.Process):
 
             # Perform optimization
             # Update global and local networks
-            if self.buffer_length == cfg.BUFFER_UPDATE_FREQ == 0 or done:
+            if self.buffer_length % cfg.BUFFER_UPDATE_FREQ == 0 or done:
                 loss = self.optimize_model(next_state, done)
 
                 # Clear buffers
                 self.buffer = dict.fromkeys(self.buffer, [])
                 self.buffer_length = 0
 
+            # Save network
+            if i % cfg.SAVE_NETWORK_FREQ == 0:
+                if not os.path.exists(cfg.EXPERIMENT_NAME):
+                    os.mkdir(cfg.EXPERIMENT_NAME)
+                torch.save(self.global_net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
+
             # Write results to log
             if i % 100 == 0:
                 self.writer.add_scalar('loss/'+ str(self.id), loss, i)
 
             eplen += 1
-            if done:
+            if done and id == 0:
                 print(self.id, i, eplen)
                 self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
                 eplen = 0

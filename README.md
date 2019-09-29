@@ -55,9 +55,16 @@ The 3 A's of A3C:
 - **Actor-Critic**: We have two types of learners, the actor and the critic, which manifest as two separate fully-connected layers on top of a base network. The actor learns the policy *π(a|s;θ)*, outputting the best action probabilities given its current state. The critic learns the state-value function *V(s;w)*-- it can therefore evaluate the actor's suggested action and guide the actor's training updates. 
 - **Asynchronous**: There are multiple workers who each have their own local AC networks. Each of these workers interacts with it's own copy of the environment and contributes to updating a shared global AC network's parameters, as well as periodically synchronizing with the global network. Not only does this accelerate training, but the independent agent experiences also results in more diverse training. 
 
+During training, we try to minimize a loss which has two parts. 
+[TODO finish]
+[TODO results]
 
 ## 📌 Proximal Policy Optimization (PPO) 
 
+Policy gradient methods are sensitive to step size - too small, and progress is hopelessly slow; too large and the signal is overwhelmed by the noise, or one might see catastrophic drops in performance. They also often have very poor sample efficiency, taking millions (or billions) of timesteps to learn simple tasks. We can eliminate this sensitiviy by constraining or otherwise optimizing the size of a policy update.
+
+The central idea of Proximal Policy Optimization is to avoid having too large policy update. To do that, we use a ratio that will tells us the difference between our new and old policy and clip this ratio from 0.8 to 1.2. Doing that will ensure that our policy update will not be too large.
+Moreover, PPO introduced another innovation which is training the agent by running K epochs of gradient descent over a sampling mini batches. 
 
 ## 📖 References
 - DQN: 
@@ -71,4 +78,5 @@ The 3 A's of A3C:
     - Arthur Juliani's blog post: https://medium.com/emergent-future/simple-reinforcement-learning-with-tensorflow-part-8-asynchronous-actor-critic-agents-a3c-c88f72a5e9f2
     
 - PPO
-    - Paper:
+    - Paper: https://arxiv.org/abs/1707.06347
+    - OpenAI blog post: https://openai.com/blog/openai-baselines-ppo/
