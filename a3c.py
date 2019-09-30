@@ -12,7 +12,7 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from collections import namedtuple
 
-import config.a3c as cfg
+import config_a3c as cfg
 from game.wrapper import Game 
 
 # TODO: Log
@@ -21,7 +21,8 @@ class ActorCriticNetwork(torch.nn.Module):
 
     def __init__(self):
         """
-        Initialize an ActorCriticNetwork instance.
+        Initialize an ActorCriticNetwork instance. The actor has an output for 
+        each action and the critic provides the value output
         Uses the same parameters as specified in the paper.
         """
         super(ActorCriticNetwork, self).__init__()
@@ -180,6 +181,13 @@ class ActorCriticWorker():
         self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'entropy']}
         self.buffer_length = 0
 
+        # Epsilon used for selecting actions
+        self.epsilon = np.linspace(
+            cfg.INITIAL_EXPLORATION, 
+            cfg.FINAL_EXPLORATION, 
+            cfg.FINAL_EXPLORATION_FRAME
+        )
+
 
     def optimize_model(self, next_state, done):
         """
@@ -249,8 +257,17 @@ class ActorCriticWorker():
             self.net.train()
 
             # Perform action according to action_probs
-            selected_action = np.random.choice(
-                np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())[0]
+            # But perform stochastically from time to time 
+
+            # Perform random action with probability self.epsilon. Otherwise, 
+            # the action which yields the maximum reward.
+            step = min(step, cfg.FINAL_EXPLORATION_FRAME - 1)
+            if random.random() <= self.epsilon[step]:
+                selected_action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
+            else:
+                selected_action = np.random.choice(
+                    np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())[0]
+
             selected_action_prob = log_action_probs[selected_action]
             frame, reward, done = self.game.step(selected_action)
 
@@ -288,8 +305,9 @@ class ActorCriticWorker():
 
             eplen += 1
             if done and id == 0:
-                print(self.id, i, eplen)
                 self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
+            if done: 
+                print(self.id, i, eplen)
                 eplen = 0
 
             # Move on to next state

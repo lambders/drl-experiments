@@ -14,7 +14,7 @@ from collections import namedtuple
 import torch
 from tensorboardX import SummaryWriter
 
-import config.dqn as cfg
+import config_dqn as cfg
 from game.wrapper import Game
 
 # Global parameter which tells us if we have detected a CUDA capable device
