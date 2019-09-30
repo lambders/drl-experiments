@@ -261,7 +261,7 @@ class ActorCriticWorker():
 
             # Perform random action with probability self.epsilon. Otherwise, 
             # the action which yields the maximum reward.
-            step = min(step, cfg.FINAL_EXPLORATION_FRAME - 1)
+            step = min(i, cfg.FINAL_EXPLORATION_FRAME - 1)
             if random.random() <= self.epsilon[step]:
                 selected_action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
             else:
@@ -304,9 +304,8 @@ class ActorCriticWorker():
                 self.writer.add_scalar('loss/'+ str(self.id), loss, i)
 
             eplen += 1
-            if done and id == 0:
-                self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
             if done: 
+                self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
                 print(self.id, i, eplen)
                 eplen = 0
 
