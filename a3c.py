@@ -8,6 +8,7 @@ import os
 import math
 import random
 import torch
+from torch.distributions.categorical import Categorical
 import numpy as np 
 from tensorboardX import SummaryWriter
 from collections import namedtuple
@@ -39,6 +40,18 @@ class ActorCriticNetwork(torch.nn.Module):
         self.logsoftmax1 = torch.nn.LogSoftmax()
 
 
+    def init_weights(self, m):
+        """
+        Initialize the weights of the network.
+
+        Arguments:
+            m (tensor): layer instance 
+        """
+        if type(m) == torch.nn.Conv2d or type(m) == torch.nn.Linear:
+            torch.nn.init.uniform(m.weight, -0.01, 0.01)
+            m.bias.data.fill_(0.01)
+
+
     def forward(self, x):
         """
         Forward pass to compute Q-values for given input states.
@@ -56,11 +69,14 @@ class ActorCriticNetwork(torch.nn.Module):
         x = self.relu3(self.fc3(x))
 
         y = self.actor(x)
-        action_probs = self.softmax1(y)
-        log_action_probs = self.logsoftmax1(y)
-        values = self.critic(x)
-        # torch.Size([1, 2]) torch.Size([1, 1])
-        return action_probs[0], log_action_probs[0], values[0][0]
+        action_probs = self.softmax1(y)[0]
+        log_action_probs = self.logsoftmax1(y)[0]
+        value = self.critic(x)[0][0]
+
+        action = Categorical(action_probs).sample().detach()
+        entropy = -(action_probs*log_action_probs).sum() 
+        log_prob = log_action_probs.gather(0, action)
+        return action, entropy, log_prob, value
 
 
 
@@ -164,6 +180,7 @@ class ActorCriticWorker():
 
         # Create local ACNetwork
         self.net = ActorCriticNetwork()
+        self.net.apply(self.net.init_weights)
 
         # Synchronize with shared model
         self.net.load_state_dict(self.global_net.state_dict())
@@ -200,24 +217,25 @@ class ActorCriticWorker():
         Returns:
             loss (float)
         """
-
-        # Forward pass through the net
-        batch_next_state = next_state.unsqueeze(0)
-        _, _, value_1 = self.net(batch_next_state)
-
         # Calculate the value of the next state
         if done:
             value_1 = 0
+        else:
+            batch_next_state = next_state.unsqueeze(0)
+            _, _, _, value_1 = self.net(batch_next_state)
+        self.buffer['value'].append(value_1)
 
         # Calculate the losses
-        loss_value, loss_policy = 0, 0
-        value_target = value_1
+        loss_value, loss_policy, gae = 0, 0, 0
         for i in reversed(range(self.buffer_length)):
-            value_target = cfg.DISCOUNT * value_target + self.buffer['reward'][i]
-            advantage = value_target - self.buffer['value'][i]
 
+            value_target = cfg.DISCOUNT * value_1 + self.buffer['reward'][i]
+            advantage = value_1 - self.buffer['value'][i]
             loss_value += advantage ** 2 
-            loss_policy += -self.buffer['action_prob'][i] * advantage - cfg.ENTROPY_COEFF * self.buffer['entropy'][i]
+
+            delta_t = self.buffer['reward'][i] + cfg.DISCOUNT*self.buffer['value'][i+1] - self.buffer['value'][i]
+            gae = gae * cfg.DISCOUNT + delta_t
+            loss_policy -= self.buffer['action_prob'][i] * gae.detach() - cfg.ENTROPY_COEFF * self.buffer['entropy'][i]
 
         # Total loss
         loss = loss_policy + cfg.VALUE_LOSS_COEFF * loss_value
@@ -225,6 +243,7 @@ class ActorCriticWorker():
         # Push local gradients to global network
         self.shared_opt.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), cfg.MAX_GRAD_NORM)
         for lp, gp in zip(self.net.parameters(), self.global_net.parameters()):
             gp._grad = lp.grad
         self.shared_opt.step()
@@ -251,38 +270,24 @@ class ActorCriticWorker():
         for i in range(1, cfg.TRAIN_ITERATIONS):
 
             # Forward pass through the net
-            self.net.eval()
             batch_state = state.unsqueeze(0)
-            action_probs, log_action_probs, value = self.net(batch_state)
-            self.net.train()
+            action, entropy, log_prob, value = self.net(batch_state)
+            # if random.random() <= self.epsilon[min(i, cfg.FINAL_EXPLORATION_FRAME - 1)]:
+            #     action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
 
-            # Perform action according to action_probs
-            # But perform stochastically from time to time 
-
-            # Perform random action with probability self.epsilon. Otherwise, 
-            # the action which yields the maximum reward.
-            step = min(i, cfg.FINAL_EXPLORATION_FRAME - 1)
-            if random.random() <= self.epsilon[step]:
-                selected_action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
-            else:
-                selected_action = np.random.choice(
-                    np.arange(cfg.N_ACTIONS), 1, p=action_probs.detach().numpy())[0]
-
-            selected_action_prob = log_action_probs[selected_action]
-            frame, reward, done = self.game.step(selected_action)
-
-            # Calculate entropy
-            entropy = -torch.sum(action_probs * log_action_probs)
-
-            # Update next state
-            next_state = torch.cat([state[1:], frame])
+            # Perform action in environment
+            frame, reward, done = self.game.step(action)
 
             # Save experience to buffer
             self.buffer['value'].append(value)
-            self.buffer['action_prob'].append(selected_action_prob)
+            self.buffer['action_prob'].append(log_prob)
             self.buffer['reward'].append(reward)
             self.buffer['entropy'].append(entropy)
             self.buffer_length += 1
+
+            # Update next state
+            next_state = torch.cat([state[1:], frame])
+            eplen += 1
 
             # Perform optimization
             # Update global and local networks
@@ -293,6 +298,17 @@ class ActorCriticWorker():
                 self.buffer = dict.fromkeys(self.buffer, [])
                 self.buffer_length = 0
 
+                if done:
+                    if self.id == 2:
+                        self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
+                    print(self.id, i, eplen)
+                    eplen = 0
+
+                # Initialize the environment and state (do nothing)
+                frame, reward, done = self.game.step(0)
+                state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+
+
             # Save network
             if i % cfg.SAVE_NETWORK_FREQ == 0:
                 if not os.path.exists(cfg.EXPERIMENT_NAME):
@@ -301,13 +317,8 @@ class ActorCriticWorker():
 
             # Write results to log
             if i % 100 == 0:
-                self.writer.add_scalar('loss/'+ str(self.id), loss, i)
-
-            eplen += 1
-            if done: 
-                self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
-                print(self.id, i, eplen)
-                eplen = 0
+                if self.id == 2:
+                    self.writer.add_scalar('loss/'+ str(self.id), loss, i)
 
             # Move on to next state
             state = next_state

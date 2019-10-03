@@ -6,13 +6,13 @@ The hyperparameters used for training the A3C Network.
 N_WORKERS = 8
 
 # Refresh buffer after every x actions
-BUFFER_UPDATE_FREQ = 20
+BUFFER_UPDATE_FREQ = 5
 
 # Number of frames in a state
 AGENT_HISTORY_LENGTH = 4
 
 # Optimizer parameter
-LEARNING_RATE = 1e-6 
+LEARNING_RATE = 1e-5
 
 # Entropy regularization weight
 ENTROPY_COEFF = 0.01
@@ -27,6 +27,9 @@ DISCOUNT = 0.99
 INITIAL_EXPLORATION = 0.75
 FINAL_EXPLORATION = 0.01
 FINAL_EXPLORATION_FRAME = 1000000
+
+# Gradient clipping
+MAX_GRAD_NORM = 50
 
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
