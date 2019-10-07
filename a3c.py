@@ -60,8 +60,10 @@ class ActorCriticNetwork(torch.nn.Module):
             x (tensor): minibatch of input states
 
         Returns:
-            tensor: prob of selecting an action, of size (n_actions)
-            tensor: single linear output representing the value fn (1)
+            int: selected action, 0 to do nothing and 1 to flap
+            float: entropy of action space
+            float: log probability of selecting the action 
+            float: value of the particular state
         """
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
@@ -272,8 +274,8 @@ class ActorCriticWorker():
             # Forward pass through the net
             batch_state = state.unsqueeze(0)
             action, entropy, log_prob, value = self.net(batch_state)
-            # if random.random() <= self.epsilon[min(i, cfg.FINAL_EXPLORATION_FRAME - 1)]:
-            #     action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
+            if random.random() <= self.epsilon[min(i, cfg.FINAL_EXPLORATION_FRAME - 1)]:
+                action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
 
             # Perform action in environment
             frame, reward, done = self.game.step(action)
