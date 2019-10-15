@@ -52,7 +52,7 @@ class ActorCriticNetwork(torch.nn.Module):
             m.bias.data.fill_(0.01)
 
 
-    def forward(self, x):
+    def forward(self, x, eps=-1):
         """
         Forward pass to compute Q-values for given input states.
 
@@ -65,20 +65,29 @@ class ActorCriticNetwork(torch.nn.Module):
             float: log probability of selecting the action 
             float: value of the particular state
         """
+        # Forward pass
+        b = x.shape[0]
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
         x = x.view(x.size()[0], -1)
         x = self.relu3(self.fc3(x))
-
         y = self.actor(x)
-        action_probs = self.softmax1(y)[0]
-        log_action_probs = self.logsoftmax1(y)[0]
-        value = self.critic(x)[0][0]
+        action_probs = torch.squeeze(self.softmax1(y))
+        log_action_probs = torch.squeeze(self.logsoftmax1(y))
+        value = torch.squeeze(self.critic(x))
 
-        action = Categorical(action_probs).sample().detach()
-        entropy = -(action_probs*log_action_probs).sum() 
-        log_prob = log_action_probs.gather(0, action)
-        return action, entropy, log_prob, value
+        # Choose action
+        action = Categorical(action_probs).sample_n(b).detach()
+        if random.random() <= eps:
+            action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
+        action = torch.tensor(action, dtype=torch.long)
+        if b > 1:
+            action = action.unsqueeze(-1)
+
+        # Calculate auxiliary values
+        entropy = -(action_probs*log_action_probs).sum(axis=-1) 
+        log_prob = log_action_probs.gather(-1, action)
+        return action.squeeze(), entropy, log_prob.squeeze(), value
 
 
 
@@ -273,9 +282,8 @@ class ActorCriticWorker():
 
             # Forward pass through the net
             batch_state = state.unsqueeze(0)
-            action, entropy, log_prob, value = self.net(batch_state)
-            if random.random() <= self.epsilon[min(i, cfg.FINAL_EXPLORATION_FRAME - 1)]:
-                action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
+            eps = self.epsilon[min(i, cfg.FINAL_EXPLORATION_FRAME - 1)]
+            action, entropy, log_prob, value = self.net(batch_state, eps=eps)
 
             # Perform action in environment
             frame, reward, done = self.game.step(action)
@@ -305,11 +313,6 @@ class ActorCriticWorker():
                         self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
                     print(self.id, i, eplen)
                     eplen = 0
-
-                # Initialize the environment and state (do nothing)
-                frame, reward, done = self.game.step(0)
-                state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
-
 
             # Save network
             if i % cfg.SAVE_NETWORK_FREQ == 0:

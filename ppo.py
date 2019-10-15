@@ -68,27 +68,29 @@ class ActorCriticNetwork(torch.nn.Module):
             float: value of the particular state
         """
         # Forward pass
+        b = x.shape[0]
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
         x = x.view(x.size()[0], -1)
         x = self.relu3(self.fc3(x))
-
         y = self.actor(x)
-        action_probs = self.softmax1(y)[0]
-        log_action_probs = self.logsoftmax1(y)[0]
-        value = self.critic(x)[0][0]
+        action_probs = torch.squeeze(self.softmax1(y))
+        log_action_probs = torch.squeeze(self.logsoftmax1(y))
+        value = torch.squeeze(self.critic(x))
 
         # Choose action
         if action is None:
-            action = Categorical(action_probs).sample().detach()
+            action = Categorical(action_probs).sample_n(b).detach()
             if random.random() <= eps:
-                action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
-        action = torch.tensor(action)
+                action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
+        action = torch.tensor(action, dtype=torch.long)
+        if b > 1:
+            action = action.unsqueeze(-1)
 
         # Calculate auxiliary values
-        entropy = -(action_probs*log_action_probs).sum() 
-        log_prob = log_action_probs.gather(0, action)
-        return action, entropy, log_prob, value
+        entropy = -(action_probs*log_action_probs).sum(axis=-1) 
+        log_prob = log_action_probs.gather(-1, action)
+        return action.squeeze(), entropy, log_prob.squeeze(), value
 
 
 
@@ -203,9 +205,6 @@ class ActorCriticWorker():
         # Log to tensorBoard
         self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
 
-        # Loss
-        self.loss = torch.nn.MSELoss()
-
         # Buffer
         self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'state' ,'action']}
         self.buffer_length = 0
@@ -227,30 +226,41 @@ class ActorCriticWorker():
         Returns:
             loss (float)
         """
+        # Converting the buffers to tensors
+        buffer_action_prob = torch.Tensor(self.buffer['action_prob']).detach()
+        buffer_reward = torch.Tensor(self.buffer['reward']).detach()
+        # buffer_reward = (buffer_reward - buffer_reward.mean()) / (buffer_reward.std() + 1e-5)
+        buffer_value = torch.Tensor(self.buffer['value']).detach()
+        buffer_action = torch.Tensor(self.buffer['action']).detach()
+        buffer_state = torch.stack(self.buffer['state']).detach()
+
         for i in range(cfg.UPDATE_EPOCHS):
+
             # Evaluating old actions and values:
-            _, entropy, log_prob, value = self.net(self.buffer['state'], self.buffer['action'])
+            _, entropy, log_prob, value = self.net(buffer_state, buffer_action)
             
             # Action loss
-            ratio = torch.exp(log_prob - self.buffer['action_prob'])
-            adv = self.buffer['reward'] - value
+            ratio = torch.exp(log_prob - buffer_action_prob)
+            adv = buffer_reward - value
             adv = (adv - adv.mean()) / (adv.std() + 1e-5)
             surr1 = ratio * adv
             surr2 = torch.clamp(ratio, 1-cfg.CLIP, 1+cfg.CLIP) * adv
             action_loss = -torch.min(surr1, surr2).mean()
 
             # Value Loss
-            value_clipped = self.buffer['value'] + (value - self.buffer['value']).clamp(-cfg.CLIP, cfg.CLIP)
-            value_losses = (value - self.buffer['reward']).pow(2)
-            value_losses_clipped = (value_clipped - self.buffer['reward']).pow(2)
+            value_clipped = buffer_value + (value - buffer_value).clamp(-cfg.CLIP, cfg.CLIP)
+            value_losses = (value - buffer_reward).pow(2)
+            value_losses_clipped = (value_clipped - buffer_reward).pow(2)
             value_loss = cfg.VALUE_LOSS_COEFF * torch.max(value_losses, value_losses_clipped).mean()
-
+            # print(value.shape, buffer_reward.shape)
+            # print(torch.nn.MSELoss(value, buffer_reward))
+            # value_loss = cfg.VALUE_LOSS_COEFF * torch.nn.MSELoss(value, buffer_reward)
+            
             # Entropy loss
-            entropy_loss = cfg.ENTROPY_COEFF * entropy
-
-            loss = action_loss + value_loss - entropy_loss
+            entropy_loss = cfg.ENTROPY_COEFF * torch.mean(entropy)
             
             # Push local gradients to global network
+            loss = action_loss + value_loss - entropy_loss
             self.shared_opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), cfg.MAX_GRAD_NORM)
@@ -283,7 +293,7 @@ class ActorCriticWorker():
             batch_state = state.unsqueeze(0)
             eps_step = min(i, cfg.FINAL_EXPLORATION_FRAME - 1)
             action, entropy, log_prob, value = self.net(batch_state, eps=self.epsilon[eps_step])
-        
+            
             # Perform action in environment
             frame, reward, done = self.game.step(action)
 
@@ -305,7 +315,7 @@ class ActorCriticWorker():
                 loss = self.optimize_model()
 
                 # Clear buffers
-                self.buffer = dict.fromkeys(self.buffer, [])
+                self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'state' ,'action']}
                 self.buffer_length = 0
 
                 if done:
@@ -314,9 +324,9 @@ class ActorCriticWorker():
                     print(self.id, i, eplen)
                     eplen = 0
 
-                # Initialize the environment and state (do nothing)
-                frame, reward, done = self.game.step(0)
-                state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+                # # Initialize the environment and state (do nothing)
+                # frame, reward, done = self.game.step(0)
+                # state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
 
 
             # Save network
