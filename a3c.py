@@ -77,7 +77,7 @@ class ActorCriticNetwork(torch.nn.Module):
         value = torch.squeeze(self.critic(x))
 
         # Choose action
-        action = Categorical(action_probs).sample_n(b).detach()
+        action = Categorical(action_probs).sample(b).detach()
         if random.random() <= eps:
             action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
         action = torch.tensor(action, dtype=torch.long)
@@ -91,110 +91,18 @@ class ActorCriticNetwork(torch.nn.Module):
 
 
 
-class SharedAdam(torch.optim.Adam):
+class Agent():
 
-    def __init__(self, params, lr=cfg.LEARNING_RATE):
+    def __init__(self):
         """
-        Initialize a shared Adam optimizer.
-        Taken from ikostrikov's repo:
-        https://github.com/ikostrikov/pytorch-a3c/blob/master/my_optim.py
-
-        Arguments:
-            params: network parameters to optimize
-            lr (float): learning rate
+        Initialize an A2C Instance. 
         """
-        super(SharedAdam, self).__init__(params, lr)
-
-        for group in self.param_groups:
-            for p in group['params']:
-                state = self.state[p]
-                state['step'] = torch.zeros(1)
-                state['exp_avg'] = p.data.new().resize_as_(p.data).zero_()
-                state['exp_avg_sq'] = p.data.new().resize_as_(p.data).zero_()
-
-    def share_memory(self):
-        """
-        Share memory globally.
-        """
-        for group in self.param_groups:
-            for p in group['params']:
-                state = self.state[p]
-                state['step'].share_memory_()
-                state['exp_avg'].share_memory_()
-                state['exp_avg_sq'].share_memory_()
-
-    def step(self, closure=None):
-        """
-        Performs a single optimization step.
-
-        Arguments:
-            closure (callable): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            loss = closure()
-
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-                state = self.state[p]
-
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-                beta1, beta2 = group['betas']
-
-                state['step'] += 1
-
-                if group['weight_decay'] != 0:
-                    grad = grad.add(group['weight_decay'], p.data)
-
-                # Decay the first and second moment running average coefficient
-                exp_avg.mul_(beta1).add_(1 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
-
-                denom = exp_avg_sq.sqrt().add_(group['eps'])
-
-                bias_correction1 = 1 - beta1 ** state['step'].item()
-                bias_correction2 = 1 - beta2 ** state['step'].item()
-                step_size = group['lr'] * math.sqrt(
-                    bias_correction2) / bias_correction1
-
-                p.data.addcdiv_(-step_size, exp_avg, denom)
-
-        return loss
-
-
-
-class ActorCriticWorker():
-
-    def __init__(self, id, global_net, shared_opt):
-        """
-        Initialize an actor-critic worker. 
-
-        Arguments:
-            id (int): worker id
-            global_net (torch.nn.Module): global network this instance will 
-                update periodically
-            shared_optim (SharedAdam): global optimizer shared by all 
-                of the workers
-        """
-        # Worker id
-        self.id = id
-
-        # Global network
-        self.global_net = global_net
-
-        # Shared optimizer
-        self.shared_opt = shared_opt
-
-        # Create local ACNetwork
+        # Create ACNetwork
         self.net = ActorCriticNetwork()
         self.net.apply(self.net.init_weights)
 
-        # Synchronize with shared model
-        self.net.load_state_dict(self.global_net.state_dict())
+        # Optimizer
+        self.opt = torch.optim.Adam(model.parameters(), lr=cfg.LEARNING_RATE)
 
         # The flappy bird game instance
         self.game = Game(cfg.FRAME_SIZE)
@@ -252,12 +160,12 @@ class ActorCriticWorker():
         loss = loss_policy + cfg.VALUE_LOSS_COEFF * loss_value
 
         # Push local gradients to global network
-        self.shared_opt.zero_grad()
+        self.opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), cfg.MAX_GRAD_NORM)
         for lp, gp in zip(self.net.parameters(), self.global_net.parameters()):
             gp._grad = lp.grad
-        self.shared_opt.step()
+        self.opt.step()
 
         # Pull global parameters
         self.net.load_state_dict(self.global_net.state_dict())
@@ -309,9 +217,8 @@ class ActorCriticWorker():
                 self.buffer_length = 0
 
                 if done:
-                    if self.id == 2:
-                        self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
-                    print(self.id, i, eplen)
+                    self.writer.add_scalar('episode_length', eplen, i)
+                    print(i, eplen)
                     eplen = 0
 
             # Save network
@@ -322,8 +229,7 @@ class ActorCriticWorker():
 
             # Write results to log
             if i % 100 == 0:
-                if self.id == 2:
-                    self.writer.add_scalar('loss/'+ str(self.id), loss, i)
+                self.writer.add_scalar('loss', loss, i)
 
             # Move on to next state
             state = next_state
@@ -331,21 +237,6 @@ class ActorCriticWorker():
 
     def play_game():
         return None
-
-
-
-def actor_critic_worker_entrypoint(id, net, opt):
-    """
-    The entrypoint for a torch multiprocess. 
-    Must be at top level.
-
-    Args:
-        id (int): worker id
-        net (torch.nn.Module): shared network isntance
-        opt (torch.optim): shared optimizer
-    """
-    worker = ActorCriticWorker(id, net, opt)
-    worker.train()
 
 
 

@@ -40,6 +40,9 @@ FRAME_SIZE = 84
 # Interval in iterations at which to save network weights
 SAVE_NETWORK_FREQ = 100000
 
+# Number of iteratations between saving loss
+LOG_FREQ = 100
+
 # Number of iterations to train the network
 TRAIN_ITERATIONS = 3000000
 
