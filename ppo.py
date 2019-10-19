@@ -39,7 +39,6 @@ class ActorCriticNetwork(torch.nn.Module):
         self.softmax1 = torch.nn.Softmax()
         self.logsoftmax1 = torch.nn.LogSoftmax()
 
-
     def init_weights(self, m):
         """
         Initialize the weights of the network.
@@ -48,7 +47,7 @@ class ActorCriticNetwork(torch.nn.Module):
             m (tensor): layer instance 
         """
         if type(m) == torch.nn.Conv2d or type(m) == torch.nn.Linear:
-            torch.nn.init.uniform(m.weight, -0.01, 0.01)
+            torch.nn.init.uniform(m.weight, -0.5, 0.5)
             m.bias.data.fill_(0.01)
 
 
@@ -67,30 +66,35 @@ class ActorCriticNetwork(torch.nn.Module):
             float: log probability of selecting the action 
             float: value of the particular state
         """
-        # Forward pass
-        b = x.shape[0]
-        x = self.relu1(self.conv1(x))
-        x = self.relu2(self.conv2(x))
-        x = x.view(x.size()[0], -1)
-        x = self.relu3(self.fc3(x))
-        y = self.actor(x)
-        action_probs = torch.squeeze(self.softmax1(y))
-        log_action_probs = torch.squeeze(self.logsoftmax1(y))
-        value = torch.squeeze(self.critic(x))
+        try:
+            # Forward pass
+            b = x.shape[0]
+            x = self.conv1(x)
+            x = self.relu1(x)
+            x = self.relu2(self.conv2(x))
+            x = x.view(x.size()[0], -1)
+            x = self.relu3(self.fc3(x))
+            y = self.actor(x)
+            action_probs = torch.squeeze(self.softmax1(y))
+            log_action_probs = torch.squeeze(self.logsoftmax1(y))
+            value = torch.squeeze(self.critic(x))
 
-        # Choose action
-        if action is None:
-            action = Categorical(action_probs).sample_n(b).detach()
-            if random.random() <= eps:
-                action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
-        action = torch.tensor(action, dtype=torch.long)
-        if b > 1:
-            action = action.unsqueeze(-1)
+            # Choose action
+            if action is None:
+                action = Categorical(action_probs).sample_n(b).detach()
+                if random.random() <= eps:
+                    action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
+            action = torch.tensor(action, dtype=torch.long)
+            if b > 1:
+                action = action.unsqueeze(-1)
 
-        # Calculate auxiliary values
-        entropy = -(action_probs*log_action_probs).sum(axis=-1) 
-        log_prob = log_action_probs.gather(-1, action)
-        return action.squeeze(), entropy, log_prob.squeeze(), value
+            # Calculate auxiliary values
+            entropy = -(action_probs*log_action_probs).sum(axis=-1) 
+            log_prob = log_action_probs.gather(-1, action)
+            return action.squeeze(), entropy, log_prob.squeeze(), value
+        except RuntimeError as e:
+            print(e)
+            return None, None, None, None
 
 
 
@@ -188,13 +192,13 @@ class ActorCriticWorker():
 
         # Global network
         self.global_net = global_net
+        self.global_net.apply(self.global_net.init_weights)
 
         # Shared optimizer
         self.shared_opt = shared_opt
 
         # Create local ACNetwork
         self.net = ActorCriticNetwork()
-        self.net.apply(self.net.init_weights)
 
         # Synchronize with shared model
         self.net.load_state_dict(self.global_net.state_dict())
@@ -293,6 +297,11 @@ class ActorCriticWorker():
             batch_state = state.unsqueeze(0)
             eps_step = min(i, cfg.FINAL_EXPLORATION_FRAME - 1)
             action, entropy, log_prob, value = self.net(batch_state, eps=self.epsilon[eps_step])
+            if action is None:
+                self.game.restart()
+                eplen = 0
+                print("RESTART@")
+                continue
             
             # Perform action in environment
             frame, reward, done = self.game.step(action)

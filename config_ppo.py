@@ -12,7 +12,7 @@ BUFFER_UPDATE_FREQ = 20
 AGENT_HISTORY_LENGTH = 4
 
 # Optimizer parameter
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 1e-7
 
 # Entropy regularization weight
 ENTROPY_COEFF = 0.01
@@ -32,9 +32,9 @@ FINAL_EXPLORATION_FRAME = 1000000
 UPDATE_EPOCHS = 4
 
 # Value clipping
-CLIP = 0.2
+CLIP = 0.1
 
-MAX_GRAD_NORM = 0.5
+MAX_GRAD_NORM = 0.1
 
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
