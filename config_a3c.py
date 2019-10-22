@@ -23,11 +23,6 @@ VALUE_LOSS_COEFF = 0.5
 # Discount factor weight
 DISCOUNT = 0.99 
 
-# Epsilon-greedy exploration parameters
-INITIAL_EXPLORATION = 0.75
-FINAL_EXPLORATION = 0.01
-FINAL_EXPLORATION_FRAME = 1000000
-
 # Gradient clipping
 MAX_GRAD_NORM = 50
 
