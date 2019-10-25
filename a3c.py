@@ -66,7 +66,6 @@ class ActorCriticNetwork(torch.nn.Module):
             float: value of the particular state
         """
         # Forward pass
-        b = x.shape[0]
         x = self.relu1(self.conv1(x))
         x = self.relu2(self.conv2(x))
         x = x.view(x.size()[0], -1)
@@ -77,18 +76,22 @@ class ActorCriticNetwork(torch.nn.Module):
 
 
     def act(self, x):
+        """
+        Returns:
+            tensor(8,1)
+        """
         # Forward pass
-        value, action_logits = self.forward(x)
+        values, action_logits = self.forward(x)
         probs = self.softmax(action_logits)
         log_probs = self.logsoftmax(action_logits)
 
         # Choose action stochastically
-        action = probs.multinomial()
+        actions = probs.multinomial(1)
 
         # Evaluate action
-        action_log_probs = log_probs.gather(1, action)
+        action_log_probs = log_probs.gather(1, actions)
         dist_entropy = -(log_probs * probs).sum(-1).mean()
-        return value, action, action_log_probs
+        return values, actions, action_log_probs
 
     def evaluate_actions(self, x, actions):
         # Forward pass 
@@ -171,12 +174,15 @@ class Agent():
         next_state_list, reward_list, done_list = [], [], []
         for i in range(cfg.N_WORKERS):
             frame, reward, done = self.games[i].step(actions[i])
-            next_state = torch.cat([states[i][1:], frame])
+            if states is None:
+                next_state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+            else:
+                next_state = torch.cat([states[i][1:], frame])
             next_state_list.append(next_state)
             reward_list.append(reward)
             done_list.append(done)
 
-        return next_state_list, reward_list, done_list
+        return torch.stack(next_state_list), reward_list, done_list
 
 
     def train(self):
@@ -188,9 +194,8 @@ class Agent():
         eplen = 0
 
         # Initialize the environment and state (do nothing)
-        intial_actions = np.zeros(cfg.N_WORKERS)
-        frame, reward, done = self.env_step(initial_actions)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        initial_actions = np.zeros(cfg.N_WORKERS)
+        states, _, _ = self.env_step(None, initial_actions)
 
         # Start a training episode
         for i in range(1, cfg.TRAIN_ITERATIONS):
@@ -199,7 +204,7 @@ class Agent():
             values, actions, action_log_probs = self.net.act(states)
 
             # Perform action in environment
-            next_states, rewards, dones = self.env_step(action)
+            next_states, rewards, dones = self.env_step(states, actions)
             masks = torch.FloatTensor([[0.0] if done else [1.0] for done in dones])
             eplen += 1
 
