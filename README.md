@@ -47,13 +47,12 @@ I had to stop/resume training a couple times, which is why the training curve is
 
 ![Episode lengths](doc/dqn_eplen.jpg)
 
-## 📌 Asynchronous Advantage Actor Critic (A3C)
+## 📌 Synchronous Advantage Actor Critic (A2C)
 
 The 3 A's of A3C:
 
 - **Advantage**: We learned about Q-values in the previous section. The state-value *V(s)* can be thought of the measure of the "goodness" of a certain state and can be recovered from the Q-values and the policy: *V(s) = ∑<sub>a∈A</sub> Q(s,a)π(a|s)*. The difference between the Q-value and V is known as the advantage, which captures how much better and action is compared to others at a given state. Because our network is not computing Q values directly, we can approximate Q with the discounted reward R. A = *Q(s,a) - V(s) ~ R - V(s)*.
 - **Actor-Critic**: We have two types of learners, the actor and the critic, which manifest as two separate fully-connected layers on top of a base network. The actor learns the policy *π(a|s;θ)*, outputting the best action probabilities given its current state. The critic learns the state-value function *V(s;w)*-- it can therefore evaluate the actor's suggested action and guide the actor's training updates. 
-- **Asynchronous**: There are multiple workers who each have their own local AC networks. Each of these workers interacts with it's own copy of the environment and contributes to updating a shared global AC network's parameters, as well as periodically synchronizing with the global network. Not only does this accelerate training, but the independent agent experiences also results in more diverse training. 
 
 During training, we try to minimize a loss which has two parts. 
 [TODO finish]

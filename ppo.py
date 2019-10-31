@@ -1,7 +1,7 @@
 """
-Implementation of A3C by the Google DeepMind team.
+Implementation of PPO by the OpenAI team.
 Reference:
-    "Asynchronous Methods for Deep Reinforcement Learning" by Mnih et al. 
+    "Proximal Policy Optimization Algorithms" Schulman et al.
 """
 
 import os
@@ -14,9 +14,7 @@ from tensorboardX import SummaryWriter
 from collections import namedtuple
 
 import config_ppo as cfg
-from game.wrapper import Game 
-
-# TODO: Log
+from game.wrapper import Game
 
 class ActorCriticNetwork(torch.nn.Module):
 
@@ -36,8 +34,9 @@ class ActorCriticNetwork(torch.nn.Module):
         self.relu3 = torch.nn.ReLU()
         self.actor = torch.nn.Linear(256, cfg.N_ACTIONS)
         self.critic = torch.nn.Linear(256, 1)
-        self.softmax1 = torch.nn.Softmax()
-        self.logsoftmax1 = torch.nn.LogSoftmax()
+        self.softmax = torch.nn.Softmax()
+        self.logsoftmax = torch.nn.LogSoftmax()
+
 
     def init_weights(self, m):
         """
@@ -47,18 +46,16 @@ class ActorCriticNetwork(torch.nn.Module):
             m (tensor): layer instance 
         """
         if type(m) == torch.nn.Conv2d or type(m) == torch.nn.Linear:
-            torch.nn.init.uniform(m.weight, -0.5, 0.5)
+            torch.nn.init.uniform(m.weight, -0.01, 0.01)
             m.bias.data.fill_(0.01)
 
 
-    def forward(self, x, action=None, eps=-1):
+    def forward(self, x):
         """
         Forward pass to compute Q-values for given input states.
 
         Arguments:
             x (tensor): minibatch of input states
-            action (int, optional): 0 to not flap, 1 to flap
-            eps (float, optional): choose random action with eps probability
 
         Returns:
             int: selected action, 0 to do nothing and 1 to flap
@@ -66,159 +63,69 @@ class ActorCriticNetwork(torch.nn.Module):
             float: log probability of selecting the action 
             float: value of the particular state
         """
-        try:
-            # Forward pass
-            b = x.shape[0]
-            x = self.conv1(x)
-            x = self.relu1(x)
-            x = self.relu2(self.conv2(x))
-            x = x.view(x.size()[0], -1)
-            x = self.relu3(self.fc3(x))
-            y = self.actor(x)
-            action_probs = torch.squeeze(self.softmax1(y))
-            log_action_probs = torch.squeeze(self.logsoftmax1(y))
-            value = torch.squeeze(self.critic(x))
-
-            # Choose action
-            if action is None:
-                action = Categorical(action_probs).sample_n(b).detach()
-                if random.random() <= eps:
-                    action = np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05], size=b)
-            action = torch.tensor(action, dtype=torch.long)
-            if b > 1:
-                action = action.unsqueeze(-1)
-
-            # Calculate auxiliary values
-            entropy = -(action_probs*log_action_probs).sum(axis=-1) 
-            log_prob = log_action_probs.gather(-1, action)
-            return action.squeeze(), entropy, log_prob.squeeze(), value
-        except RuntimeError as e:
-            print(e)
-            return None, None, None, None
+        # Forward pass
+        x = self.relu1(self.conv1(x))
+        x = self.relu2(self.conv2(x))
+        x = x.view(x.size()[0], -1)
+        x = self.relu3(self.fc3(x))
+        action_logits = self.actor(x)
+        value = self.critic(x)
+        return value, action_logits
 
 
-
-class SharedAdam(torch.optim.Adam):
-
-    def __init__(self, params, lr=cfg.LEARNING_RATE):
+    def act(self, x):
         """
-        Initialize a shared Adam optimizer.
-        Taken from ikostrikov's repo:
-        https://github.com/ikostrikov/pytorch-a3c/blob/master/my_optim.py
-
-        Arguments:
-            params: network parameters to optimize
-            lr (float): learning rate
+        Returns:
+            tensor(8,1)
         """
-        super(SharedAdam, self).__init__(params, lr)
+        # Forward pass
+        values, action_logits = self.forward(x)
+        probs = self.softmax(action_logits)
+        log_probs = self.logsoftmax(action_logits)
 
-        for group in self.param_groups:
-            for p in group['params']:
-                state = self.state[p]
-                state['step'] = torch.zeros(1)
-                state['exp_avg'] = p.data.new().resize_as_(p.data).zero_()
-                state['exp_avg_sq'] = p.data.new().resize_as_(p.data).zero_()
+        # Choose action stochastically
+        actions = probs.multinomial(1)
 
-    def share_memory(self):
+        # Evaluate action
+        action_log_probs = log_probs.gather(1, actions)
+        dist_entropy = -(log_probs * probs).sum(-1).mean()
+        return values, actions, action_log_probs
+
+    def evaluate_actions(self, x, actions):
+        # Forward pass 
+        value, action_logits = self.forward(x)
+        probs = self.softmax(action_logits)
+        log_probs = self.logsoftmax(action_logits)
+
+        # Evaluate actions
+        action_log_probs = log_probs.gather(1, actions)
+        dist_entropy = -(log_probs * probs).sum(-1).mean()
+        return value, action_log_probs, dist_entropy
+
+
+Experience = namedtuple('Experience', ('state', 'action', 'action_log_prob', 'value', 'reward', 'mask'))
+
+class Agent():
+
+    def __init__(self):
         """
-        Share memory globally.
+        Initialize an A2C Instance. 
         """
-        for group in self.param_groups:
-            for p in group['params']:
-                state = self.state[p]
-                state['step'].share_memory_()
-                state['exp_avg'].share_memory_()
-                state['exp_avg_sq'].share_memory_()
-
-    def step(self, closure=None):
-        """
-        Performs a single optimization step.
-
-        Arguments:
-            closure (callable): A closure that reevaluates the model
-                and returns the loss.
-        """
-        loss = None
-        if closure is not None:
-            loss = closure()
-
-        for group in self.param_groups:
-            for p in group['params']:
-                if p.grad is None:
-                    continue
-                grad = p.grad.data
-                state = self.state[p]
-
-                exp_avg, exp_avg_sq = state['exp_avg'], state['exp_avg_sq']
-                beta1, beta2 = group['betas']
-
-                state['step'] += 1
-
-                if group['weight_decay'] != 0:
-                    grad = grad.add(group['weight_decay'], p.data)
-
-                # Decay the first and second moment running average coefficient
-                exp_avg.mul_(beta1).add_(1 - beta1, grad)
-                exp_avg_sq.mul_(beta2).addcmul_(1 - beta2, grad, grad)
-
-                denom = exp_avg_sq.sqrt().add_(group['eps'])
-
-                bias_correction1 = 1 - beta1 ** state['step'].item()
-                bias_correction2 = 1 - beta2 ** state['step'].item()
-                step_size = group['lr'] * math.sqrt(
-                    bias_correction2) / bias_correction1
-
-                p.data.addcdiv_(-step_size, exp_avg, denom)
-
-        return loss
-
-
-
-class ActorCriticWorker():
-
-    def __init__(self, id, global_net, shared_opt):
-        """
-        Initialize an actor-critic worker. 
-
-        Arguments:
-            id (int): worker id
-            global_net (torch.nn.Module): global network this instance will 
-                update periodically
-            shared_optim (SharedAdam): global optimizer shared by all 
-                of the workers
-        """
-        # Worker id
-        self.id = id
-
-        # Global network
-        self.global_net = global_net
-        self.global_net.apply(self.global_net.init_weights)
-
-        # Shared optimizer
-        self.shared_opt = shared_opt
-
-        # Create local ACNetwork
+        # Create ACNetwork
         self.net = ActorCriticNetwork()
+        self.net.apply(self.net.init_weights)
 
-        # Synchronize with shared model
-        self.net.load_state_dict(self.global_net.state_dict())
+        # Optimizer
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE)
 
         # The flappy bird game instance
-        self.game = Game(cfg.FRAME_SIZE)
+        self.games = [Game(cfg.FRAME_SIZE) for i in range(cfg.N_WORKERS)]
 
         # Log to tensorBoard
         self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
 
         # Buffer
-        self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'state' ,'action']}
-        self.buffer_length = 0
-
-        # Epsilon used for selecting actions
-        self.epsilon = np.linspace(
-            cfg.INITIAL_EXPLORATION, 
-            cfg.FINAL_EXPLORATION, 
-            cfg.FINAL_EXPLORATION_FRAME
-        )
+        self.memory = []
 
 
     def optimize_model(self):
@@ -226,131 +133,141 @@ class ActorCriticWorker():
         Performs a single step of optimization.
 
         Arguments:
+            next_state (tensor): next frame of the game
+            done (bool): True if next_state is a terminal state, else False
 
         Returns:
             loss (float)
         """
-        # Converting the buffers to tensors
-        buffer_action_prob = torch.Tensor(self.buffer['action_prob']).detach()
-        buffer_reward = torch.Tensor(self.buffer['reward']).detach()
-        # buffer_reward = (buffer_reward - buffer_reward.mean()) / (buffer_reward.std() + 1e-5)
-        buffer_value = torch.Tensor(self.buffer['value']).detach()
-        buffer_action = torch.Tensor(self.buffer['action']).detach()
-        buffer_state = torch.stack(self.buffer['state']).detach()
+        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
+        # detailed explanation). This converts batch-array of Transitions
+        # to Transition of batch-arrays.
+        memory = Experience(*zip(*self.memory))
 
-        for i in range(cfg.UPDATE_EPOCHS):
+        batch = {
+            'state': torch.stack(memory.state),
+            'action': torch.stack(memory.action),
+            'reward': torch.tensor(memory.reward),
+            'mask': torch.stack(memory.mask),
+            'action_log_prob': torch.stack(memory.action_log_prob),
+            'value': torch.stack(memory.value)
+        }
+        state_shape = batch['state'].size()[2:]
+        action_shape = batch['action'].size()[-1]
 
-            # Evaluating old actions and values:
-            _, entropy, log_prob, value = self.net(buffer_state, buffer_action)
-            
-            # Action loss
-            ratio = torch.exp(log_prob - buffer_action_prob)
-            adv = buffer_reward - value
-            adv = (adv - adv.mean()) / (adv.std() + 1e-5)
-            surr1 = ratio * adv
-            surr2 = torch.clamp(ratio, 1-cfg.CLIP, 1+cfg.CLIP) * adv
-            action_loss = -torch.min(surr1, surr2).mean()
+        # Process batch
+        values, action_log_probs, dist_entropy = self.net.evaluate_actions(batch['state'].view(-1, *state_shape), batch['action'].view(-1, action_shape)) ### HERE
+        values = values.view(cfg.BUFFER_UPDATE_FREQ, cfg.N_WORKERS, 1)
+        action_log_probs = action_log_probs.view(cfg.BUFFER_UPDATE_FREQ, cfg.N_WORKERS, 1)
 
-            # Value Loss
-            value_clipped = buffer_value + (value - buffer_value).clamp(-cfg.CLIP, cfg.CLIP)
-            value_losses = (value - buffer_reward).pow(2)
-            value_losses_clipped = (value_clipped - buffer_reward).pow(2)
-            value_loss = cfg.VALUE_LOSS_COEFF * torch.max(value_losses, value_losses_clipped).mean()
-            # print(value.shape, buffer_reward.shape)
-            # print(torch.nn.MSELoss(value, buffer_reward))
-            # value_loss = cfg.VALUE_LOSS_COEFF * torch.nn.MSELoss(value, buffer_reward)
-            
-            # Entropy loss
-            entropy_loss = cfg.ENTROPY_COEFF * torch.mean(entropy)
-            
-            # Push local gradients to global network
-            loss = action_loss + value_loss - entropy_loss
-            self.shared_opt.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), cfg.MAX_GRAD_NORM)
-            for lp, gp in zip(self.net.parameters(), self.global_net.parameters()):
-                gp._grad = lp.grad
-            self.shared_opt.step()
+        # Compute returns
+        next_value, _ = self.net(batch['state'][-1])
+        returns = torch.zeros(cfg.BUFFER_UPDATE_FREQ + 1, cfg.N_WORKERS, 1)
+        returns[-1] = next_value
+        for i in reversed(range(cfg.BUFFER_UPDATE_FREQ)):
+            returns[i] = returns[i+1] * cfg.DISCOUNT * batch['mask'][i] + batch['reward'][i]
+        returns = returns[:-1]
 
-        # Pull global parameters
-        self.net.load_state_dict(self.global_net.state_dict())
+        # Compute advantages
+        advantages = returns - batch['value']
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
-        return loss
+        # Action loss
+        ratio = torch.exp(action_log_probs - batch['action_log_prob'])
+        surr1 = ratio * advantages 
+        surr2 = torch.clamp(ratio, 1-cfg.CLIP, 1+cfg.CLIP) * advantages
+        action_loss = -torch.min(surr1, surr2).mean()
 
-    
+        # Value loss
+        value_clipped = batch['value'] + (values - batch['value']).clamp(-cfg.CLIP, cfg.CLIP)
+        value_losses = (values - batch['reward']).pow(2)
+        value_losses_clipped = (value_clipped - batch['reward']).pow(2)
+        value_loss = cfg.VALUE_LOSS_COEFF * torch.max(value_losses, value_losses_clipped).mean()
+
+        # Total loss
+        loss = value_loss * cfg.VALUE_LOSS_COEFF + action_loss - dist_entropy * cfg.ENTROPY_COEFF
+
+        # Optimizer step
+        self.opt.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm(self.net.parameters(), cfg.MAX_GRAD_NORM)
+        self.opt.step()
+
+        return loss, value_loss * cfg.VALUE_LOSS_COEFF, action_loss, - dist_entropy * cfg.ENTROPY_COEFF
+
+
+    def env_step(self, states, actions):
+        next_state_list, reward_list, done_list = [], [], []
+        for i in range(cfg.N_WORKERS):
+            frame, reward, done = self.games[i].step(actions[i])
+            if states is None:
+                next_state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+            else:
+                next_state = torch.cat([states[i][1:], frame])
+            next_state_list.append(next_state)
+            reward_list.append([reward])
+            done_list.append(done)
+
+        return torch.stack(next_state_list), reward_list, done_list
+
+
     def train(self):
         """
         Main training loop.
         """
         # Episode lengths
-        episode_length = []
-        eplen = 0
+        episode_lengths = np.zeros(cfg.N_WORKERS)
 
         # Initialize the environment and state (do nothing)
-        frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        initial_actions = np.zeros(cfg.N_WORKERS)
+        states, _, _ = self.env_step(None, initial_actions)
 
         # Start a training episode
         for i in range(1, cfg.TRAIN_ITERATIONS):
 
             # Forward pass through the net
-            batch_state = state.unsqueeze(0)
-            eps_step = min(i, cfg.FINAL_EXPLORATION_FRAME - 1)
-            action, entropy, log_prob, value = self.net(batch_state, eps=self.epsilon[eps_step])
-            if action is None:
-                self.game.restart()
-                eplen = 0
-                print("RESTART@")
-                continue
-            
+            values, actions, action_log_probs = self.net.act(states)
+
             # Perform action in environment
-            frame, reward, done = self.game.step(action)
+            next_states, rewards, dones = self.env_step(states, actions)
+            masks = torch.FloatTensor([[0.0] if done else [1.0] for done in dones])
 
             # Save experience to buffer
-            self.buffer['state'].append(state)
-            self.buffer['action'].append(action)
-            self.buffer['value'].append(value)
-            self.buffer['action_prob'].append(log_prob)
-            self.buffer['reward'].append(reward)
-            self.buffer_length += 1
-
-            # Update next state
-            next_state = torch.cat([state[1:], frame])
-            eplen += 1
+            self.memory.append(
+                Experience(states.data, actions.data, action_log_probs.data, values.data, rewards, masks)
+            )
 
             # Perform optimization
-            # Update global and local networks
-            if self.buffer_length % cfg.BUFFER_UPDATE_FREQ == 0 or done:
-                loss = self.optimize_model()
+            if i % cfg.BUFFER_UPDATE_FREQ == 0:
+                loss, value_loss, action_loss, entropy_loss = self.optimize_model()
+                # Reset memory
+                self.memory = []
 
-                # Clear buffers
-                self.buffer = {k: [] for k in ['value', 'action_prob', 'reward', 'state' ,'action']}
-                self.buffer_length = 0
-
-                if done:
-                    if self.id == 2:
-                        self.writer.add_scalar('episode_length/' + str(self.id), eplen, i)
-                    print(self.id, i, eplen)
-                    eplen = 0
-
-                # # Initialize the environment and state (do nothing)
-                # frame, reward, done = self.game.step(0)
-                # state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
-
+            # Log episode length
+            for j in range(cfg.N_WORKERS):
+                if not dones[j]:
+                    episode_lengths[j] += 1
+                else:
+                    self.writer.add_scalar('episode_length/' + str(j), episode_lengths[j], i)
+                    print(j, episode_lengths[j])
+                    episode_lengths[j] = 0
 
             # Save network
             if i % cfg.SAVE_NETWORK_FREQ == 0:
                 if not os.path.exists(cfg.EXPERIMENT_NAME):
                     os.mkdir(cfg.EXPERIMENT_NAME)
-                torch.save(self.global_net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
+                torch.save(self.net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
 
             # Write results to log
-            if i % 100 == 0:
-                if self.id == 2:
-                    self.writer.add_scalar('loss/'+ str(self.id), loss, i)
+            if i % cfg.LOG_FREQ == 0:
+                self.writer.add_scalar('loss/total', loss, i)
+                self.writer.add_scalar('loss/action', action_loss, i)
+                self.writer.add_scalar('loss/value', value_loss, i)
+                self.writer.add_scalar('loss/entropy', entropy_loss, i)
 
             # Move on to next state
-            state = next_state
+            states = next_states
+
 
 
     def play_game():
@@ -358,60 +275,10 @@ class ActorCriticWorker():
 
 
 
-def actor_critic_worker_entrypoint(id, net, opt):
-    """
-    The entrypoint for a torch multiprocess. 
-    Must be at top level.
 
-    Args:
-        id (int): worker id
-        net (torch.nn.Module): shared network isntance
-        opt (torch.optim): shared optimizer
-    """
-    worker = ActorCriticWorker(id, net, opt)
-    worker.train()
-
-
-
-class Trainer():
-    def __init__(self):
-        """
-        Create the training instance which will coordinate all the individual
-        ActorCriticWorker subprocesses.
-        """
-
-        # Global shared network
-        self.net = ActorCriticNetwork()
-        self.net.share_memory()
-
-        # Optimizer
-        self.opt = SharedAdam(self.net.parameters())
-        self.opt.share_memory()
-
-        # Create the workers
-        torch.multiprocessing.set_start_method('spawn')
-        self.workers = [
-            torch.multiprocessing.Process(
-                target=actor_critic_worker_entrypoint, 
-                args=(i, self.net, self.opt)
-            )  
-            for i in range(cfg.N_WORKERS)
-        ] 
-
-    def train(self):
-        """
-        Start the global training loop
-        """
-        # Start the workers
-        for worker in self.workers:
-            worker.start()
-        
-        # Finish jobs
-        for worker in self.workers:
-            worker.join()
 
 
 
 if __name__ == '__main__':
-    x = Trainer()
+    x = Agent()
     x.train()

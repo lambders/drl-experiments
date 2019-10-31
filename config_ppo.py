@@ -3,7 +3,7 @@ The hyperparameters used for training the A3C Network.
 """
 
 # Number of actor-crtic workers
-N_WORKERS = 1
+N_WORKERS = 8
 
 # Refresh buffer after every x actions
 BUFFER_UPDATE_FREQ = 20
@@ -12,7 +12,7 @@ BUFFER_UPDATE_FREQ = 20
 AGENT_HISTORY_LENGTH = 4
 
 # Optimizer parameter
-LEARNING_RATE = 1e-7
+LEARNING_RATE = 1e-4
 
 # Entropy regularization weight
 ENTROPY_COEFF = 0.01
@@ -23,18 +23,9 @@ VALUE_LOSS_COEFF = 0.5
 # Discount factor weight
 DISCOUNT = 0.99 
 
-# Epsilon-greedy exploration parameters
-INITIAL_EXPLORATION = 0.75
-FINAL_EXPLORATION = 0.01
-FINAL_EXPLORATION_FRAME = 1000000
-
-# Number of epochs to perform during optimization
-UPDATE_EPOCHS = 4
-
-# Value clipping
+# Gradient clipping
+MAX_GRAD_NORM = 40
 CLIP = 0.1
-
-MAX_GRAD_NORM = 0.1
 
 # Number of output actions. In flappy bird, this is either do nothing or flap wings.
 N_ACTIONS = 2
@@ -44,6 +35,9 @@ FRAME_SIZE = 84
 
 # Interval in iterations at which to save network weights
 SAVE_NETWORK_FREQ = 100000
+
+# Number of iteratations between saving loss
+LOG_FREQ = 100
 
 # Number of iterations to train the network
 TRAIN_ITERATIONS = 3000000

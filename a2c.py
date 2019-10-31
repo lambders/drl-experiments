@@ -182,7 +182,7 @@ class Agent():
         torch.nn.utils.clip_grad_norm(self.net.parameters(), cfg.MAX_GRAD_NORM)
         self.opt.step()
 
-        return loss
+        return loss, value_loss * cfg.VALUE_LOSS_COEFF, action_loss, -dist_entropy * cfg.ENTROPY_COEFF
 
 
     def env_step(self, states, actions):
@@ -228,7 +228,7 @@ class Agent():
 
             # Perform optimization
             if i % cfg.BUFFER_UPDATE_FREQ == 0:
-                loss = self.optimize_model()
+                loss, value_loss, action_loss, entropy_loss = self.optimize_model()
                 # Reset memory
                 self.memory = []
 
@@ -249,7 +249,10 @@ class Agent():
 
             # Write results to log
             if i % cfg.LOG_FREQ == 0:
-                self.writer.add_scalar('loss', loss, i)
+                self.writer.add_scalar('loss/total', loss, i)
+                self.writer.add_scalar('loss/action', action_loss, i)
+                self.writer.add_scalar('loss/value', value_loss, i)
+                self.writer.add_scalar('loss/entropy', entropy_loss, i)                
 
             # Move on to next state
             states = next_states
