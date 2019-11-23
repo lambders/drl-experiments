@@ -1,7 +1,7 @@
 # hack-flappy-bird-drl 
-Training a DRL agent to play Flappy Bird. Includes implementations of DQN, A3C, and PPO methods.
+Training a DRL agent to play Flappy Bird. Includes implementations of DQN, A2C, and PPO methods.
 
-| DQN  | A3C | PPO |
+| DQN  | A2C | PPO |
 |:------------: |:---------------: |:---------------:|
 |![](doc/dqn_demo_compressed.gif) | [WIP] | [WIP] |
 

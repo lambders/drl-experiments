@@ -14,7 +14,6 @@ from collections import namedtuple
 import torch
 from tensorboardX import SummaryWriter
 
-import config_dqn as cfg
 from game.wrapper import Game
 
 # Global parameter which tells us if we have detected a CUDA capable device
@@ -24,14 +23,16 @@ CUDA_DEVICE = torch.cuda.is_available()
 
 class DQN(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, options):
         """
         Initialize a Deep Q-Network instance.
         Uses the same parameters as specified in the paper.
         """
         super(DQN, self).__init__()
+
+        self.opt = options
         
-        self.conv1 = torch.nn.Conv2d(cfg.AGENT_HISTORY_LENGTH, 32, 8, 4)
+        self.conv1 = torch.nn.Conv2d(self.opt.len_agent_history, 32, 8, 4)
         self.relu1 = torch.nn.ReLU(inplace=True)
         self.conv2 = torch.nn.Conv2d(32, 64, 4, 2)
         self.relu2 = torch.nn.ReLU(inplace=True)
@@ -39,7 +40,7 @@ class DQN(torch.nn.Module):
         self.relu3 = torch.nn.ReLU(inplace=True)
         self.fc4 = torch.nn.Linear(3136, 512) 
         self.relu4 = torch.nn.ReLU(inplace=True)
-        self.fc5 = torch.nn.Linear(512, cfg.N_ACTIONS)
+        self.fc5 = torch.nn.Linear(512, self.opt.n_actions)
 
 
     def init_weights(self, m):
@@ -81,14 +82,14 @@ Experience = namedtuple('Experience', ('state', 'action', 'reward', 'next_state'
 
 class ReplayMemory():
 
-    def __init__(self):
+    def __init__(self, options):
         """
         Initialize a replay memory instance.
         Used by agent to create minibatches of experiences. Resuts in greater 
         data efficiency, reduced update variance, and smoother learning.
         """
         self.memory = []
-        self.capacity = cfg.REPLAY_MEMORY_SIZE
+        self.capacity = options.replay_memory_size
 
 
     def add(self, experience):
@@ -145,31 +146,32 @@ class ReplayMemory():
 
 
 
-class Agent:
+class DQNAgent:
 
-    def __init__(self):
+    def __init__(self, options):
         """
         Initialize an agent instance.
         """
+        self.opt = options
 
         # Replay memory buffer
-        self.replay_memory = ReplayMemory()
+        self.replay_memory = ReplayMemory(self.opt)
 
         # Epsilon used for selecting actions
         self.epsilon = np.linspace(
-            cfg.INITIAL_EXPLORATION, 
-            cfg.FINAL_EXPLORATION, 
-            cfg.FINAL_EXPLORATION_FRAME
+            self.opt.initial_exploration, 
+            self.opt.final_exploration, 
+            self.opt.final_exploration_frame
         )
 
         # Create network
-        self.net = DQN()
-        if cfg.MODE == 'train':
+        self.net = DQN(self.opt)
+        if self.opt.mode == 'train':
             self.net.apply(self.net.init_weights)
-            if cfg.CHECKPOINT_DIR:
-                self.net.load_state_dict(torch.load(cfg.CHECKPOINT_DIR))
-        if cfg.MODE == 'eval':
-            self.net.load_state_dict(torch.load(cfg.CHECKPOINT_DIR))
+            if self.opt.weights_dir:
+                self.net.load_state_dict(torch.load(self.opt.weights_dir))
+        if self.opt.mode == 'eval':
+            self.net.load_state_dict(torch.load(self.opt.weights_dir))
             self.net.eval()
 
         if CUDA_DEVICE:
@@ -178,15 +180,15 @@ class Agent:
         # The optimizer
         self.optimizer = torch.optim.Adam(
             self.net.parameters(),
-            lr=cfg.LEARNING_RATE
+            lr=self.opt.learning_rate
         )
 
         # The flappy bird game instance
-        self.game = Game(cfg.FRAME_SIZE) 
+        self.game = Game(self.opt.frame_size) 
 
         # Log to tensorBoard
-        if cfg.MODE == 'train':
-            self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
+        if self.opt.mode == 'train':
+            self.writer = SummaryWriter(self.opt.exp_name)
 
         # Loss
         self.loss = torch.nn.MSELoss()
@@ -210,13 +212,13 @@ class Agent:
             state = state.cuda()
 
         # Select epsilon
-        step = min(step, cfg.FINAL_EXPLORATION_FRAME - 1)
+        step = min(step, self.opt.final_exploration_frame - 1)
         epsilon = self.epsilon[step]
 
         # Perform random action with probability self.epsilon. Otherwise, select
         # the action which yields the maximum reward.
         if random.random() <= epsilon:
-            return np.random.choice(cfg.N_ACTIONS, p=[0.95, 0.05])
+            return np.random.choice(self.opt.n_actions, p=[0.95, 0.05])
         else:
             return torch.argmax(self.net(state)[0])
 
@@ -230,7 +232,7 @@ class Agent:
             loss (float)
         """
         # Sample a batch [state, action, reward, next_state]
-        batch = self.replay_memory.sample(cfg.MINIBATCH_SIZE)
+        batch = self.replay_memory.sample(self.opt.batch_size)
         if batch is None:
             return
 
@@ -242,8 +244,8 @@ class Agent:
         q_batch_1, _ = torch.max(self.net(batch['next_state']), dim=1)
         y_batch = torch.tensor(
             [batch['reward'][i] if batch['done'][i] else 
-            batch['reward'][i] + cfg.DISCOUNT_FACTOR * q_batch_1[i] 
-            for i in range(cfg.MINIBATCH_SIZE)]
+            batch['reward'][i] + self.opt.discount_factor * q_batch_1[i] 
+            for i in range(self.opt.batch_size)]
         )
         if CUDA_DEVICE:
             y_batch = y_batch.cuda()
@@ -269,10 +271,10 @@ class Agent:
 
         # Initialize the environment and state (do nothing)
         frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        state = torch.cat([frame for i in range(self.opt.len_agent_history)])
 
         # Start a training episode
-        for i in range(1, cfg.TRAIN_ITERATIONS):
+        for i in range(1, self.opt.n_train_iterations):
 
             # Perform an action
             action = self.select_action(state, i)
@@ -291,13 +293,13 @@ class Agent:
             state = next_state
 
             # Save network
-            if i % cfg.SAVE_NETWORK_FREQ == 0:
-                if not os.path.exists(cfg.EXPERIMENT_NAME):
-                    os.mkdir(cfg.EXPERIMENT_NAME)
-                torch.save(self.net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
+            if i % self.opt.save_frequency == 0:
+                if not os.path.exists(self.opt.exp_name):
+                    os.mkdir(self.opt.exp_name)
+                torch.save(self.net.state_dict(), f'{self.opt.exp_name}/{str(i).zfill(7)}.pt')
 
             # Write results to log
-            if i % 100 == 0:
+            if i % self.opt.log_frequency == 0:
                 self.writer.add_scalar('loss', loss, i)
 
             eplen += 1
@@ -313,7 +315,7 @@ class Agent:
 
         # Initialize the environment and state (do nothing)
         frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+        state = torch.cat([frame for i in range(self.opt.len_agent_history)])
 
         # Start playing
         while True:
@@ -334,14 +336,4 @@ class Agent:
             # If we lost, exit
             if done:
                 break
-
-
-
-if __name__ == '__main__':
-
-    x = Agent()
-    if cfg.MODE == 'train':
-        x.train()
-    if cfg.MODE == 'eval':
-        x.play_game()
 

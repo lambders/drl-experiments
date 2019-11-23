@@ -1,5 +1,5 @@
 """
-Implementation of A3C by the Google DeepMind team.
+Implementation of A2C by the Google DeepMind team.
 Reference:
     "Asynchronous Methods for Deep Reinforcement Learning" by Mnih et al. 
 """
@@ -13,28 +13,29 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from collections import namedtuple
 
-import config_a2c as cfg
 from game.wrapper import Game 
 
-# TODO: Log
 
-class ActorCriticNetwork(torch.nn.Module):
 
-    def __init__(self):
+class ActorCriticNetworkself.opt(torch.nn.Module):
+
+    def __init__(self, options):
         """
-        Initialize an ActorCriticNetwork instance. The actor has an output for 
+        Initialize an ActorCriticNetworkself.opt instance. The actor has an output for 
         each action and the critic provides the value output
         Uses the same parameters as specified in the paper.
         """
-        super(ActorCriticNetwork, self).__init__()
+        super(ActorCriticNetworkself.opt, self).__init__()
+
+        self.opt = options
         
-        self.conv1 = torch.nn.Conv2d(cfg.AGENT_HISTORY_LENGTH, 16, 8, 4)
+        self.conv1 = torch.nn.Conv2d(self.opt.len_agent_history, 16, 8, 4)
         self.relu1 = torch.nn.ReLU()
         self.conv2 = torch.nn.Conv2d(16, 32, 4, 2)
         self.relu2 = torch.nn.ReLU()
         self.fc3 = torch.nn.Linear(2592, 256) # TODO: Don't hard code
         self.relu3 = torch.nn.ReLU()
-        self.actor = torch.nn.Linear(256, cfg.N_ACTIONS)
+        self.actor = torch.nn.Linear(256, self.opt.n_actions)
         self.critic = torch.nn.Linear(256, 1)
         self.softmax = torch.nn.Softmax()
         self.logsoftmax = torch.nn.LogSoftmax()
@@ -107,24 +108,26 @@ class ActorCriticNetwork(torch.nn.Module):
 
 Experience = namedtuple('Experience', ('state', 'action', 'action_log_prob', 'value', 'reward', 'mask'))
 
-class Agent():
+class A2CAgent():
 
-    def __init__(self):
+    def __init__(self, options):
         """
         Initialize an A2C Instance. 
         """
+        self.opt = options
+
         # Create ACNetwork
-        self.net = ActorCriticNetwork()
+        self.net = ActorCriticNetwork(self.opt)
         self.net.apply(self.net.init_weights)
 
         # Optimizer
-        self.opt = torch.optim.Adam(self.net.parameters(), lr=cfg.LEARNING_RATE)
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
 
         # The flappy bird game instance
-        self.games = [Game(cfg.FRAME_SIZE) for i in range(cfg.N_WORKERS)]
+        self.games = [Game(self.opt.frame_size) for i in range(self.opt.n_workers)]
 
         # Log to tensorBoard
-        self.writer = SummaryWriter(cfg.EXPERIMENT_NAME)
+        self.writer = SummaryWriter(self.opt.exp_name)
 
         # Buffer
         self.memory = []
@@ -159,38 +162,38 @@ class Agent():
         next_value, _ = self.net(batch['state'][-1])
 
         # Compute returns
-        returns = torch.zeros(cfg.BUFFER_UPDATE_FREQ + 1, cfg.N_WORKERS, 1)
+        returns = torch.zeros(self.opt.buffer_update_freq + 1, self.opt.n_workers, 1)
         returns[-1] = next_value
-        for i in reversed(range(cfg.BUFFER_UPDATE_FREQ)):
-            returns[i] = returns[i+1] * cfg.DISCOUNT * batch['mask'][i] + batch['reward'][i]
+        for i in reversed(range(self.opt.buffer_update_freq)):
+            returns[i] = returns[i+1] * self.opt.discount_factor * batch['mask'][i] + batch['reward'][i]
         returns = returns[:-1]
 
         # Evaluate actions
         values, action_log_probs, dist_entropy = self.net.evaluate_actions(batch['state'].view(-1, *state_shape), batch['action'].view(-1, action_shape)) ### HERE
-        values = values.view(cfg.BUFFER_UPDATE_FREQ, cfg.N_WORKERS, 1)
-        action_log_probs = action_log_probs.view(cfg.BUFFER_UPDATE_FREQ, cfg.N_WORKERS, 1)
+        values = values.view(self.opt.buffer_update_freq, self.opt.n_workers, 1)
+        action_log_probs = action_log_probs.view(self.opt.buffer_update_freq, self.opt.n_workers, 1)
 
         # Compute losses
         advantages = returns - values
         value_loss = advantages.pow(2).mean()
         action_loss = -(advantages * action_log_probs).mean()
-        loss = value_loss * cfg.VALUE_LOSS_COEFF + action_loss - dist_entropy * cfg.ENTROPY_COEFF
+        loss = value_loss * self.opt.value_loss_coeff + action_loss - dist_entropy * self.opt.entropy_coeff
 
         # Optimizer step
         self.opt.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm(self.net.parameters(), cfg.MAX_GRAD_NORM)
+        torch.nn.utils.clip_grad_norm(self.net.parameters(), self.opt.max_grad_norm)
         self.opt.step()
 
-        return loss, value_loss * cfg.VALUE_LOSS_COEFF, action_loss, -dist_entropy * cfg.ENTROPY_COEFF
+        return loss, value_loss * self.opt.value_loss_coeff, action_loss, -dist_entropy * self.opt.entropy_coeff
 
 
     def env_step(self, states, actions):
         next_state_list, reward_list, done_list = [], [], []
-        for i in range(cfg.N_WORKERS):
+        for i in range(self.opt.n_workers):
             frame, reward, done = self.games[i].step(actions[i])
             if states is None:
-                next_state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+                next_state = torch.cat([frame for i in range(self.opt.len_agent_history)])
             else:
                 next_state = torch.cat([states[i][1:], frame])
             next_state_list.append(next_state)
@@ -205,14 +208,14 @@ class Agent():
         Main training loop.
         """
         # Episode lengths
-        episode_lengths = np.zeros(cfg.N_WORKERS)
+        episode_lengths = np.zeros(self.opt.n_workers)
 
         # Initialize the environment and state (do nothing)
-        initial_actions = np.zeros(cfg.N_WORKERS)
+        initial_actions = np.zeros(self.opt.n_workers)
         states, _, _ = self.env_step(None, initial_actions)
 
         # Start a training episode
-        for i in range(1, cfg.TRAIN_ITERATIONS):
+        for i in range(1, self.opt.n_train_iterations):
 
             # Forward pass through the net
             values, actions, action_log_probs = self.net.act(states)
@@ -227,13 +230,13 @@ class Agent():
             )
 
             # Perform optimization
-            if i % cfg.BUFFER_UPDATE_FREQ == 0:
+            if i % self.opt.buffer_update_freq == 0:
                 loss, value_loss, action_loss, entropy_loss = self.optimize_model()
                 # Reset memory
                 self.memory = []
 
             # Log episode length
-            for j in range(cfg.N_WORKERS):
+            for j in range(self.opt.n_workers):
                 if not dones[j]:
                     episode_lengths[j] += 1
                 else:
@@ -242,13 +245,13 @@ class Agent():
                     episode_lengths[j] = 0
 
             # Save network
-            if i % cfg.SAVE_NETWORK_FREQ == 0:
-                if not os.path.exists(cfg.EXPERIMENT_NAME):
-                    os.mkdir(cfg.EXPERIMENT_NAME)
-                torch.save(self.net.state_dict(), f'{cfg.EXPERIMENT_NAME}/{str(i).zfill(7)}.pt')
+            if i % self.opt.save_frequency == 0:
+                if not os.path.exists(self.opt.exp_name):
+                    os.mkdir(self.opt.exp_name)
+                torch.save(self.net.state_dict(), f'{self.opt.exp_name}/{str(i).zfill(7)}.pt')
 
             # Write results to log
-            if i % cfg.LOG_FREQ == 0:
+            if i % self.opt.log_frequency == 0:
                 self.writer.add_scalar('loss/total', loss, i)
                 self.writer.add_scalar('loss/action', action_loss, i)
                 self.writer.add_scalar('loss/value', value_loss, i)
