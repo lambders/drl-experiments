@@ -261,16 +261,31 @@ class A2CAgent():
             states = next_states
 
 
+    def play_game(self):
+        """
+        Play Flappy Bird using the trained network.
+        """
 
-    def play_game():
-        return None
+        # Initialize the environment and state (do nothing)
+        frame, reward, done = self.game.step(0)
+        state = torch.cat([frame for i in range(self.opt.len_agent_history)])
 
+        # Start playing
+        while True:
 
+            # Perform an action
+            state = state.unsqueeze(0)
+            if CUDA_DEVICE:
+                state = state.cuda()
+            _, action, _ = self.net.act(states)
+            frame, reward, done = self.game.step(action)
+            if CUDA_DEVICE:
+                frame = frame.cuda()
+            next_state = torch.cat([state[0][1:], frame])
 
+            # Move on to the next state
+            state = next_state
 
-
-
-
-if __name__ == '__main__':
-    x = Agent()
-    x.train()
+            # If we lost, exit
+            if done:
+                break

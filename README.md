@@ -151,3 +151,4 @@ In PPO, we want to optimize the following loss function: *(π(a|s)/π'(a|s)) A(s
 - PPO
     - Paper: https://arxiv.org/abs/1707.06347
     - OpenAI blog post: https://openai.com/blog/openai-baselines-ppo/
+    - Nikhil's implementation: https://github.com/nikhilbarhate99/PPO-PyTorch
