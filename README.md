@@ -1,5 +1,5 @@
 # hack-flappy-bird-drl 
-Training a DRL agent to play Flappy Bird. Includes implementations of DQN, A2C, and PPO methods.
+Training a DRL agent to play Flappy Bird. Includes implementations of DQN, A2C, and PPO methods. 
 
 | DQN  | A2C | PPO |
 |:------------: |:---------------: |:---------------:|
@@ -8,23 +8,92 @@ Training a DRL agent to play Flappy Bird. Includes implementations of DQN, A2C, 
 
 ## ⚙️ Running the code
 
-Replace `dqn` in the steps above with `a3c` or `ppo` to train/evaluate on those networks. 
+```sh
+# General format of commands
+python main.py --algo=<dqn, a2c, ppo> --mode=<train, eval>
+
+# So, for example, to train a2c:
+python main.py --algo=a2c --mode=train
+
+# To play a game using dqn:
+python main.py --algo=dqn --mode=eval --weights_dir=exp1/2000000.pt
+
+# You canalso  visualize your results via TensorBoard
+tensorboard --logdir <exp_name>
+```
+
+For more options, run
 
 ```sh
-# Install the requirements
-# pytorch, pygame, numpy, tensorboardX
+python main.py -h
 
-# To train
-vi config.py  # Set MODE = 'train'
-python dqn.py
+usage: main.py [-h] [--algo {dqn,a2c,ppo}] [--mode {train,evaluation}]
+               [--exp_name EXP_NAME] [--weights_dir WEIGHTS_DIR]
+               [--n_train_iterations N_TRAIN_ITERATIONS]
+               [--learning_rate LEARNING_RATE]
+               [--len_agent_history LEN_AGENT_HISTORY]
+               [--discount_factor DISCOUNT_FACTOR] [--batch_size BATCH_SIZE]
+               [--initial_exploration INITIAL_EXPLORATION]
+               [--final_exploration FINAL_EXPLORATION]
+               [--final_exploration_frame FINAL_EXPLORATION_FRAME]
+               [--replay_memory_size REPLAY_MEMORY_SIZE]
+               [--n_workers N_WORKERS]
+               [--buffer_update_freq BUFFER_UPDATE_FREQ]
+               [--entropy_coeff ENTROPY_COEFF]
+               [--value_loss_coeff VALUE_LOSS_COEFF]
+               [--max_grad_norm MAX_GRAD_NORM] [--grad_clip GRAD_CLIP]
+               [--log_frequency LOG_FREQUENCY]
+               [--save_frequency SAVE_FREQUENCY] [--n_actions N_ACTIONS]
+               [--frame_size FRAME_SIZE]
 
-# Have flappy bird play a game on its own
-vi config.py  # Set MODE = 'eval'
-python dqn.py
+drl-experiment options
 
-# You can visualize your results via TensorBoard
-# Replace EXPERIMENT_NAME with the corresponding field in your config file.
-tensorboard --logdir <EXPERIMENT_NAME>
+optional arguments:
+  -h, --help            show this help message and exit
+  --algo {dqn,a2c,ppo}  run the network in train or evaluation mode
+  --mode {train,evaluation}
+                        run the network in train or evaluation mode
+  --exp_name EXP_NAME   name of experiment, to be used as save_dir
+  --weights_dir WEIGHTS_DIR
+                        name of model to load
+  --n_train_iterations N_TRAIN_ITERATIONS
+                        number of iterations to train network
+  --learning_rate LEARNING_RATE
+                        learning rate
+  --len_agent_history LEN_AGENT_HISTORY
+                        number of stacked frames to send as input to networks
+  --discount_factor DISCOUNT_FACTOR
+                        discount factor used for discounting return
+  --batch_size BATCH_SIZE
+                        batch size
+  --initial_exploration INITIAL_EXPLORATION
+                        epsilon greedy action selection parameter
+  --final_exploration FINAL_EXPLORATION
+                        epsilon greedy action selection parameter
+  --final_exploration_frame FINAL_EXPLORATION_FRAME
+                        epsilon greedy action selection parameter
+  --replay_memory_size REPLAY_MEMORY_SIZE
+                        maximum number of transitions in replay memory
+  --n_workers N_WORKERS
+                        number of actor critic workers
+  --buffer_update_freq BUFFER_UPDATE_FREQ
+                        refresh buffer after every x actions
+  --entropy_coeff ENTROPY_COEFF
+                        entropy regularization weight
+  --value_loss_coeff VALUE_LOSS_COEFF
+                        value loss regularization weight
+  --max_grad_norm MAX_GRAD_NORM
+                        norm bound for clipping gradients
+  --grad_clip GRAD_CLIP
+                        magnitude bound for clipping gradients
+  --log_frequency LOG_FREQUENCY
+                        number of batches between each tensorboard log
+  --save_frequency SAVE_FREQUENCY
+                        number of batches between each model save
+  --n_actions N_ACTIONS
+                        number of game output actions
+  --frame_size FRAME_SIZE
+                        size of game frame in pixels
 ```
 
 ## 📌 Deep Q-Networks (DQN)
@@ -33,7 +102,7 @@ An agent in state *s ∈ S* takes an action *a ∈ A* which moves it into anothe
 
 The Q-value is a function which represents the maximum future reward when the agent performs an action *a* in state *s*, *Q(s<sub>t</sub>,a<sub>t</sub>)= max R<sub>t+1</sub>*. The estimation of future reward is given by the Bellman equation *Q(s,a) = r + γ max<sub>a'</sub> Q(s',a')*.
 
-As you can probably tell, for large state-action spaces, learning this giant table of Q-values can quickly become computationally infeasible. In deep Q-learning, we use neural networks to approximate q-values *Q(s,a; θ)* (where *θ* are the network parameters). There are some added tricks to stabilize learning:
+For large state-action spaces, learning this giant table of Q-values can quickly become computationally infeasible. In deep Q-learning, we use neural networks to approximate q-values *Q(s,a; θ)* (where *θ* are the network parameters). There are some added tricks to stabilize learning:
 - **Experience replay**: We store episode steps (*s, a, r, s'*) aka "experiences" into a replay memory. Minibatches of these experiences are later sampled during training. Not only does experience replay improve data efficiency, it also breaks up strong correlations which would occur if we used consecutive samples, reducing the variance of each update.
 - **Epsilon-greedy exploration**: With a probability *ε* we take a random action, otherwise take the optimal predicted action. *ε* is decayed over the number of training episodes. This strategy helps tackle the exporation vs. exploitation dilemma.
 
@@ -47,23 +116,26 @@ I had to stop/resume training a couple times, which is why the training curve is
 
 ![Episode lengths](doc/dqn_eplen.jpg)
 
-## 📌 Synchronous Advantage Actor Critic (A2C)
+## 📌 Advantage Actor Critic (A2C)
 
-The 3 A's of A3C:
+The A's of A2C:
 
 - **Advantage**: We learned about Q-values in the previous section. The state-value *V(s)* can be thought of the measure of the "goodness" of a certain state and can be recovered from the Q-values and the policy: *V(s) = ∑<sub>a∈A</sub> Q(s,a)π(a|s)*. The difference between the Q-value and V is known as the advantage, which captures how much better and action is compared to others at a given state. Because our network is not computing Q values directly, we can approximate Q with the discounted reward R. A = *Q(s,a) - V(s) ~ R - V(s)*.
 - **Actor-Critic**: We have two types of learners, the actor and the critic, which manifest as two separate fully-connected layers on top of a base network. The actor learns the policy *π(a|s;θ)*, outputting the best action probabilities given its current state. The critic learns the state-value function *V(s;w)*-- it can therefore evaluate the actor's suggested action and guide the actor's training updates. 
 
-During training, we try to minimize a loss which has two parts. 
-[TODO finish]
-[TODO results]
+During training, we try to minimize a loss which consists of a value loss, a policy loss, and an entropy loss. The value loss is *∑A(s)<sup>2</sup>* and the policy loss is  *∑A(s)log(V(s))*. The entropy loss *H(π)* helps encourage a good distribution of action probabilities. 
+
+### Results
+I found hyperparameter tuning for A2C to be particularly difficult -- the network also seemed pretty sensitive to initialization scheme. Given my limited resources, this is the final result I got for A2C:
 
 ## 📌 Proximal Policy Optimization (PPO) 
 
-Policy gradient methods are sensitive to step size - too small, and progress is hopelessly slow; too large and the signal is overwhelmed by the noise, or one might see catastrophic drops in performance. They also often have very poor sample efficiency, taking millions (or billions) of timesteps to learn simple tasks. We can eliminate this sensitiviy by constraining or otherwise optimizing the size of a policy update.
+Policy gradient methods are sensitive to step size and often have very poor sample efficiency, taking many timesteps to learn simple tasks. We can eliminate this sensitivity by optimizing the size of a policy update. The central idea of Proximal Policy Optimization (PPO) is to constrain the size of a policy update. To do that, we use a ratio which tells us the difference between our new and old policy, clipping this value to ensure that our policy update will not be too large. 
 
-The central idea of Proximal Policy Optimization is to avoid having too large policy update. To do that, we use a ratio that will tells us the difference between our new and old policy and clip this ratio from 0.8 to 1.2. Doing that will ensure that our policy update will not be too large.
-Moreover, PPO introduced another innovation which is training the agent by running K epochs of gradient descent over a sampling mini batches. 
+In PPO, we want to optimize the following loss function: *(π(a|s)/π'(a|s)) A(s)*. The policy ratio is clipped to be between *(1-ε, 1+ε)*
+
+### Results
+[TBD]
 
 ## 📖 References
 - DQN: 
@@ -71,7 +143,7 @@ Moreover, PPO introduced another innovation which is training the agent by runni
     - PyTorch tutorial: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
     - Toptal blog post: https://www.toptal.com/deep-learning/pytorch-reinforcement-learning-tutorial
 
-- A3C: 
+- A2C: 
     - Paper: https://arxiv.org/pdf/1602.01783v1.pdf
     - MorvanZhou's implementation: https://github.com/MorvanZhou/pytorch-A3C
     - Arthur Juliani's blog post: https://medium.com/emergent-future/simple-reinforcement-learning-with-tensorflow-part-8-asynchronous-actor-critic-agents-a3c-c88f72a5e9f2

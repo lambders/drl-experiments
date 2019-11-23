@@ -17,7 +17,7 @@ from game.wrapper import Game
 
 
 
-class ActorCriticNetworkself.opt(torch.nn.Module):
+class ActorCriticNetwork(torch.nn.Module):
 
     def __init__(self, options):
         """

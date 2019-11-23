@@ -121,7 +121,7 @@ if __name__ == '__main__':
     # Select agent
     if options.algo == 'dqn':
         agent = DQNAgent(options)
-    elif options.algo == 'a2c'
+    elif options.algo == 'a2c':
         agent = A2CAgent(options)
     elif options.algo == 'ppo':
         agent = PPOAgent(options)

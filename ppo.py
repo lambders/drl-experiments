@@ -148,12 +148,12 @@ class PPOAgent():
         memory = Experience(*zip(*self.memory))
 
         batch = {
-            'state': torch.stack(memory.state),
-            'action': torch.stack(memory.action),
-            'reward': torch.tensor(memory.reward),
-            'mask': torch.stack(memory.mask),
-            'action_log_prob': torch.stack(memory.action_log_prob),
-            'value': torch.stack(memory.value)
+            'state': torch.stack(memory.state).detach(),
+            'action': torch.stack(memory.action).detach(),
+            'reward': torch.tensor(memory.reward).detach(),
+            'mask': torch.stack(memory.mask).detach(),
+            'action_log_prob': torch.stack(memory.action_log_prob).detach(),
+            'value': torch.stack(memory.value).detach()
         }
         state_shape = batch['state'].size()[2:]
         action_shape = batch['action'].size()[-1]
@@ -172,8 +172,8 @@ class PPOAgent():
         returns = returns[:-1]
 
         # Compute advantages
-        advantages = returns - batch['value']
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
+        advantages = returns - values.detach()
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
         # Action loss
         ratio = torch.exp(action_log_probs - batch['action_log_prob'])
@@ -182,10 +182,12 @@ class PPOAgent():
         action_loss = -torch.min(surr1, surr2).mean()
 
         # Value loss
-        value_clipped = batch['value'] + (values - batch['value']).clamp(-cfg.CLIP, cfg.CLIP)
-        value_losses = (values - batch['reward']).pow(2)
-        value_losses_clipped = (value_clipped - batch['reward']).pow(2)
-        value_loss = self.opt.value_loss_coeff * torch.max(value_losses, value_losses_clipped).mean()
+        value_loss = advantages.pow(2).mean()
+        value_loss = self.opt.value_loss_coeff * value_loss
+        # value_clipped = batch['value'] + (values - batch['value']).clamp(-cfg.CLIP, cfg.CLIP)
+        # value_losses = (values - batch['reward']).pow(2)
+        # value_losses_clipped = (value_clipped - batch['reward']).pow(2)
+        # value_loss = self.opt.value_loss_coeff * torch.max(value_losses, value_losses_clipped).mean()
 
         # Total loss
         loss = value_loss * self.opt.value_loss_coeff + action_loss - dist_entropy * self.opt.entropy_coeff
