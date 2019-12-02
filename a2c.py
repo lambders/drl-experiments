@@ -121,7 +121,7 @@ class A2CAgent():
         self.net.apply(self.net.init_weights)
 
         # Optimizer
-        self.opt = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
 
         # The flappy bird game instance
         self.games = [Game(self.opt.frame_size) for i in range(self.opt.n_workers)]
@@ -180,10 +180,10 @@ class A2CAgent():
         loss = value_loss * self.opt.value_loss_coeff + action_loss - dist_entropy * self.opt.entropy_coeff
 
         # Optimizer step
-        self.opt.zero_grad()
+        self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm(self.net.parameters(), self.opt.max_grad_norm)
-        self.opt.step()
+        self.optimizer.step()
 
         return loss, value_loss * self.opt.value_loss_coeff, action_loss, -dist_entropy * self.opt.entropy_coeff
 

@@ -119,7 +119,7 @@ class PPOAgent():
         self.net.apply(self.net.init_weights)
 
         # Optimizer
-        self.opt = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
 
         # The flappy bird game instance
         self.games = [Game(self.opt.frame_size) for i in range(self.opt.n_workers)]
@@ -142,9 +142,7 @@ class PPOAgent():
         Returns:
             loss (float)
         """
-        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
-        # detailed explanation). This converts batch-array of Transitions
-        # to Transition of batch-arrays.
+        # Process batch from memory
         memory = Experience(*zip(*self.memory))
 
         batch = {
@@ -158,45 +156,39 @@ class PPOAgent():
         state_shape = batch['state'].size()[2:]
         action_shape = batch['action'].size()[-1]
 
-        # Process batch
-        values, action_log_probs, dist_entropy = self.net.evaluate_actions(batch['state'].view(-1, *state_shape), batch['action'].view(-1, action_shape)) ### HERE
-        values = values.view(self.opt.update_buffer_freq, self.opt.n_workers, 1)
-        action_log_probs = action_log_probs.view(self.opt.update_buffer_freq, self.opt.n_workers, 1)
-
         # Compute returns
-        next_value, _ = self.net(batch['state'][-1])
-        returns = torch.zeros(self.opt.update_buffer_freq + 1, self.opt.n_workers, 1)
-        returns[-1] = next_value
-        for i in reversed(range(self.opt.update_buffer_freq)):
+        returns = torch.zeros(self.opt.buffer_update_freq + 1, self.opt.n_workers, 1)
+        for i in reversed(range(self.opt.buffer_update_freq)):
             returns[i] = returns[i+1] * self.opt.discount_factor * batch['mask'][i] + batch['reward'][i]
         returns = returns[:-1]
+        returns = (returns - returns.mean()) / (returns.std() + 1e-5)
+
+        # Process batch
+        values, action_log_probs, dist_entropy = self.net.evaluate_actions(batch['state'].view(-1, *state_shape), batch['action'].view(-1, action_shape)) ### HERE
+        values = values.view(self.opt.buffer_update_freq, self.opt.n_workers, 1)
+        action_log_probs = action_log_probs.view(self.opt.buffer_update_freq, self.opt.n_workers, 1)
 
         # Compute advantages
         advantages = returns - values.detach()
-        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
 
         # Action loss
-        ratio = torch.exp(action_log_probs - batch['action_log_prob'])
+        ratio = torch.exp(action_log_probs - batch['action_log_prob'].detach())
         surr1 = ratio * advantages 
-        surr2 = torch.clamp(ratio, 1-cfg.CLIP, 1+cfg.CLIP) * advantages
+        surr2 = torch.clamp(ratio, 1-self.opt.grad_clip, 1+self.opt.grad_clip) * advantages
         action_loss = -torch.min(surr1, surr2).mean()
 
         # Value loss
-        value_loss = advantages.pow(2).mean()
+        value_loss = (returns - values).pow(2).mean()
         value_loss = self.opt.value_loss_coeff * value_loss
-        # value_clipped = batch['value'] + (values - batch['value']).clamp(-cfg.CLIP, cfg.CLIP)
-        # value_losses = (values - batch['reward']).pow(2)
-        # value_losses_clipped = (value_clipped - batch['reward']).pow(2)
-        # value_loss = self.opt.value_loss_coeff * torch.max(value_losses, value_losses_clipped).mean()
 
         # Total loss
-        loss = value_loss * self.opt.value_loss_coeff + action_loss - dist_entropy * self.opt.entropy_coeff
+        loss = value_loss + action_loss - dist_entropy * self.opt.entropy_coeff
 
         # Optimizer step
-        self.opt.zero_grad()
+        self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm(self.net.parameters(), cfg.MAX_GRAD_NORM)
-        self.opt.step()
+        torch.nn.utils.clip_grad_norm(self.net.parameters(), self.opt.max_grad_norm)
+        self.optimizer.step()
 
         return loss, value_loss * self.opt.value_loss_coeff, action_loss, - dist_entropy * self.opt.entropy_coeff
 
@@ -206,7 +198,7 @@ class PPOAgent():
         for i in range(self.opt.n_workers):
             frame, reward, done = self.games[i].step(actions[i])
             if states is None:
-                next_state = torch.cat([frame for i in range(cfg.AGENT_HISTORY_LENGTH)])
+                next_state = torch.cat([frame for i in range(self.opt.len_agent_history)])
             else:
                 next_state = torch.cat([states[i][1:], frame])
             next_state_list.append(next_state)
@@ -228,7 +220,7 @@ class PPOAgent():
         states, _, _ = self.env_step(None, initial_actions)
 
         # Start a training episode
-        for i in range(1, cfg.TRAIN_ITERATIONS):
+        for i in range(1, self.opt.n_train_iterations):
 
             # Forward pass through the net
             values, actions, action_log_probs = self.net.act(states)
@@ -243,7 +235,7 @@ class PPOAgent():
             )
 
             # Perform optimization
-            if i % self.opt.update_buffer_freq == 0:
+            if i % self.opt.buffer_update_freq == 0:
                 loss, value_loss, action_loss, entropy_loss = self.optimize_model()
                 # Reset memory
                 self.memory = []
@@ -258,13 +250,13 @@ class PPOAgent():
                     episode_lengths[j] = 0
 
             # Save network
-            if i % cfg.SAVE_NETWORK_FREQ == 0:
+            if i % self.opt.save_frequency == 0:
                 if not os.path.exists(self.opt.exp_name):
                     os.mkdir(self.opt.exp_name)
                 torch.save(self.net.state_dict(), f'{self.opt.exp_name}/{str(i).zfill(7)}.pt')
 
             # Write results to log
-            if i % cfg.LOG_FREQ == 0:
+            if i % self.opt.log_frequency == 0:
                 self.writer.add_scalar('loss/total', loss, i)
                 self.writer.add_scalar('loss/action', action_loss, i)
                 self.writer.add_scalar('loss/value', value_loss, i)

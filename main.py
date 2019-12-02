@@ -35,14 +35,15 @@ parser.add_argument("--n_train_iterations",
 parser.add_argument("--learning_rate",
                     type=float,
                     help="learning rate",
-                    default=1e-6) # DQN 1e-6, A2C/PPO 1e-4
+                    default=1e-6) # DQN 1e-6, A2C 1e-4, PPO 1e-5
 parser.add_argument("--len_agent_history",
                     type=int,
                     help="number of stacked frames to send as input to networks",
                     default=4)
 parser.add_argument("--discount_factor",
                     type=float,
-                    help="discount factor used for discounting return")
+                    help="discount factor used for discounting return",
+                    default=0.99)
 
 # DQN specific options
 parser.add_argument("--batch_size",
@@ -66,7 +67,7 @@ parser.add_argument("--replay_memory_size",
                     help="maximum number of transitions in replay memory",
                     default=25000)
 
-# A2C specific parameters
+# A2C/PPO specific parameters
 parser.add_argument("--n_workers",
                     type=int,
                     help="number of actor critic workers",
@@ -91,7 +92,6 @@ parser.add_argument("--grad_clip",
                     type=float,
                     help="magnitude bound for clipping gradients",
                     default=0.1)
-
 
 # LOGGING options
 parser.add_argument("--log_frequency",
