@@ -127,6 +127,7 @@ During training, we try to minimize a loss which consists of a value loss, a pol
 
 ### Results
 I found hyperparameter tuning for A2C to be particularly difficult -- the network also seemed pretty sensitive to initialization scheme. Given my limited resources, this is the final result I got for A2C:
+![Episode lengths](doc/a2c_eplen.jpg)
 
 ## 📌 Proximal Policy Optimization (PPO) 
 
@@ -135,7 +136,8 @@ Policy gradient methods are sensitive to step size and often have very poor samp
 In PPO, we want to optimize the following loss function: *(π(a|s)/π'(a|s)) A(s)*. The policy ratio is clipped to be between *(1-ε, 1+ε)*
 
 ### Results
-[TBD]
+As with A2C, I think PPO would have benefitted from better hyperparameter tuning, but overall we do see improvement as we increase the number of training iterations:
+![Episode lengths](doc/ppo_eplen.jpg)
 
 ## 📖 References
 - DQN: 
