@@ -114,7 +114,7 @@ In flappy bird, our action space is either "flap" or "do nothing", our state spa
 
 I had to stop/resume training a couple times, which is why the training curve isn't completely smooth. This could probably be fixed if you saved off your optimizer in addition to your network weights! As you can see, the length (in frames) of a playing episode increases as flappy learns good strategies.
 
-![Episode lengths](doc/dqn_eplen.jpg)
+<img src="doc/dqn_eplen.jpg" alt="convolution example" width="720"/>
 
 ## 📌 Advantage Actor Critic (A2C)
 

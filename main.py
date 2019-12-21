@@ -15,7 +15,7 @@ parser.add_argument("--mode",
                     type=str,
                     help="run the network in train or evaluation mode",
                     default="train",
-                    choices=["train", "evaluation"])
+                    choices=["train", "eval"])
 
 # DIRECTORY options
 parser.add_argument("--exp_name",
@@ -131,5 +131,5 @@ if __name__ == '__main__':
     # Train or evaluate agent
     if options.mode == 'train':
         agent.train()
-    elif options.mode == 'evaluate':
+    elif options.mode == 'eval':
         agent.play_game()
