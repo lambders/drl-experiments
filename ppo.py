@@ -15,6 +15,10 @@ from collections import namedtuple
 
 from game.wrapper import Game
 
+# Global parameter which tells us if we have detected a CUDA capable device
+CUDA_DEVICE = torch.cuda.is_available()
+
+
 class ActorCriticNetwork(torch.nn.Module):
 
     def __init__(self, options):
@@ -117,6 +121,16 @@ class PPOAgent():
         # Create ACNetwork
         self.net = ActorCriticNetwork(self.opt)
         self.net.apply(self.net.init_weights)
+        if self.opt.mode == 'train':
+            self.net.apply(self.net.init_weights)
+            if self.opt.weights_dir:
+                self.net.load_state_dict(torch.load(self.opt.weights_dir))
+        if self.opt.mode == 'eval':
+            self.net.load_state_dict(torch.load(self.opt.weights_dir))
+            self.net.eval()
+
+        if CUDA_DEVICE:
+            self.net = self.net.cuda()
 
         # Optimizer
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
@@ -283,6 +297,8 @@ class PPOAgent():
             if CUDA_DEVICE:
                 state = state.cuda()
             _, action, _ = self.net.act(states)
+            if CUDA_DEVICE:
+              action = action.cuda()
             frame, reward, done = self.game.step(action)
             if CUDA_DEVICE:
                 frame = frame.cuda()

@@ -15,7 +15,8 @@ from collections import namedtuple
 
 from game.wrapper import Game 
 
-
+# Global parameter which tells us if we have detected a CUDA capable device
+CUDA_DEVICE = torch.cuda.is_available()
 
 class ActorCriticNetwork(torch.nn.Module):
 
@@ -25,7 +26,7 @@ class ActorCriticNetwork(torch.nn.Module):
         each action and the critic provides the value output
         Uses the same parameters as specified in the paper.
         """
-        super(ActorCriticNetworkself.opt, self).__init__()
+        super(ActorCriticNetwork, self).__init__()
 
         self.opt = options
         
@@ -119,6 +120,16 @@ class A2CAgent():
         # Create ACNetwork
         self.net = ActorCriticNetwork(self.opt)
         self.net.apply(self.net.init_weights)
+        if self.opt.mode == 'train':
+            self.net.apply(self.net.init_weights)
+            if self.opt.weights_dir:
+                self.net.load_state_dict(torch.load(self.opt.weights_dir))
+        if self.opt.mode == 'eval':
+            self.net.load_state_dict(torch.load(self.opt.weights_dir))
+            self.net.eval()
+        
+        if CUDA_DEVICE:
+            self.net = self.net.cuda()
 
         # Optimizer
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.opt.learning_rate)
@@ -267,6 +278,7 @@ class A2CAgent():
         """
 
         # Initialize the environment and state (do nothing)
+        self.game = self.games[0]
         frame, reward, done = self.game.step(0)
         state = torch.cat([frame for i in range(self.opt.len_agent_history)])
 
@@ -277,7 +289,9 @@ class A2CAgent():
             state = state.unsqueeze(0)
             if CUDA_DEVICE:
                 state = state.cuda()
-            _, action, _ = self.net.act(states)
+            _, action, _ = self.net.act(state)
+            if CUDA_DEVICE:
+              action = action.cuda()
             frame, reward, done = self.game.step(action)
             if CUDA_DEVICE:
                 frame = frame.cuda()
