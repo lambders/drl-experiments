@@ -171,8 +171,8 @@ class DQNAgent:
             if self.opt.weights_dir:
                 self.net.load_state_dict(torch.load(self.opt.weights_dir))
         if self.opt.mode == 'eval':
-            self.net.load_state_dict(torch.load(self.opt.weights_dir))
-            self.net.eval()
+            self.net.load_state_dict(torch.load(self.opt.weights_dir, map_location=torch.device('cpu')))
+            # self.net.eval()
 
         if CUDA_DEVICE:
             self.net = self.net.cuda()
@@ -312,28 +312,28 @@ class DQNAgent:
         """
         Play Flappy Bird using the trained network.
         """
+        with torch.no_grad(): 
+            # Initialize the environment and state (do nothing)
+            frame, reward, done = self.game.step(0)
+            state = torch.cat([frame for i in range(self.opt.len_agent_history)])
 
-        # Initialize the environment and state (do nothing)
-        frame, reward, done = self.game.step(0)
-        state = torch.cat([frame for i in range(self.opt.len_agent_history)])
+            # Start playing
+            while True:
 
-        # Start playing
-        while True:
+                # Perform an action
+                state = state.unsqueeze(0)
+                if CUDA_DEVICE:
+                    state = state.cuda()
+                action = torch.argmax(self.net(state)[0])
+                frame, reward, done = self.game.step(action)
+                if CUDA_DEVICE:
+                    frame = frame.cuda()
+                next_state = torch.cat([state[0][1:], frame])
 
-            # Perform an action
-            state = state.unsqueeze(0)
-            if CUDA_DEVICE:
-                state = state.cuda()
-            action = torch.argmax(self.net(state)[0])
-            frame, reward, done = self.game.step(action)
-            if CUDA_DEVICE:
-                frame = frame.cuda()
-            next_state = torch.cat([state[0][1:], frame])
+                # Move on to the next state
+                state = next_state
 
-            # Move on to the next state
-            state = next_state
-
-            # If we lost, exit
-            if done:
-                break
+                # If we lost, exit
+                if done:
+                    break
 
